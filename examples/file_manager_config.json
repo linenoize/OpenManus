@@ -1,0 +1,38 @@
+{
+  "backends": {
+    "local": {
+      "enabled": true,
+      "base_path": "data/files/local",
+      "requires_auth": false
+    },
+    "git": {
+      "enabled": true,
+      "base_path": "data/files/git",
+      "requires_auth": false,
+      "user_name": "OpenManus",
+      "user_email": "openmanus@example.com"
+    },
+    "google_drive": {
+      "enabled": true,
+      "requires_auth": true,
+      "credentials_path": "credentials/google_drive_credentials.json",
+      "root_folder": "OpenManus"
+    },
+    "onedrive": {
+      "enabled": false,
+      "requires_auth": true,
+      "credentials_path": "credentials/onedrive_credentials.json",
+      "root_folder": "OpenManus"
+    }
+  },
+  "storage_preferences": {
+    "temp": "local",
+    "code": "git",
+    "knowledge": "git",
+    "document": "google_drive",
+    "image": "google_drive",
+    "video": "google_drive",
+    "audio": "google_drive",
+    "general": "local"
+  }
+}

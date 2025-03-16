@@ -341,8 +341,12 @@ class LocalStorageBackend(StorageBackend):
 class GitStorageBackend(StorageBackend):
     """Git repository storage backend."""
     
-    def __init__(self, repo_path: str = "data/files/git"):
+    def __init__(self, repo_path: str = "data/files/git", 
+                 user_name: str = "OpenManus", 
+                 user_email: str = "openmanus@example.com"):
         self.repo_path = pathlib.Path(repo_path)
+        self.user_name = user_name
+        self.user_email = user_email
         
         # Ensure the repo path exists
         os.makedirs(self.repo_path, exist_ok=True)
@@ -358,16 +362,16 @@ class GitStorageBackend(StorageBackend):
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 
                 # Set up git config for commits
-                subprocess.run(["git", "config", "user.name", "OpenManus"], 
+                subprocess.run(["git", "config", "user.name", self.user_name], 
                                cwd=self.repo_path, check=True, 
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                subprocess.run(["git", "config", "user.email", "openmanus@example.com"], 
+                subprocess.run(["git", "config", "user.email", self.user_email], 
                                cwd=self.repo_path, check=True, 
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 
                 # Initial commit
                 with open(self.repo_path / "README.md", "w") as f:
-                    f.write("# OpenManus Git Storage\n\nThis repository is managed by OpenManus File Manager.")
+                    f.write(f"# OpenManus Git Storage\n\nThis repository is managed by OpenManus File Manager.")
                 
                 subprocess.run(["git", "add", "README.md"], 
                                cwd=self.repo_path, check=True, 
@@ -840,61 +844,697 @@ class GitStorageBackend(StorageBackend):
 # respective APIs. These are skeleton implementations.
             
 class GoogleDriveStorageBackend(StorageBackend):
-    """Google Drive storage backend (placeholder)."""
+    """Google Drive storage backend."""
     
-    def __init__(self, credentials_path: str = None):
+    def __init__(self, credentials_path: str = None, root_folder: str = "OpenManus"):
         self.authenticated = False
+        self.credentials_path = credentials_path
+        self.root_folder = root_folder
+        self.root_folder_id = None
+        self.service = None
+        self.path_cache = {}  # Cache for path to file ID mapping
         
-        # In a real implementation, we would:
-        # 1. Load Google Drive API credentials
-        # 2. Authenticate with Google Drive
-        # 3. Set up a client
+        # Import Google Drive API dependencies
+        try:
+            from googleapiclient.discovery import build
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+            import pickle
+            
+            self.googleapiclient_discovery = build
+            self.InstalledAppFlow = InstalledAppFlow
+            self.Request = Request
+            self.Credentials = Credentials
+            self.pickle = pickle
+            
+            # APIs imported successfully
+            self.imports_successful = True
+        except ImportError:
+            print("Error: Google Drive API dependencies not installed.")
+            print("Run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+            self.imports_successful = False
+            return
         
-        # Placeholder authentication message
-        print("Note: GoogleDriveStorageBackend is a placeholder. Actual authentication required.")
+        if not credentials_path:
+            print("Note: GoogleDriveStorageBackend requires credentials_path for authentication.")
+            return
+            
+        if not self.imports_successful:
+            print("Cannot initialize Google Drive backend due to missing dependencies.")
+            return
+        
+        try:
+            # Define the scopes required
+            SCOPES = ['https://www.googleapis.com/auth/drive']
+            
+            # Authenticate and create the Drive service
+            creds = None
+            token_path = os.path.join(os.path.dirname(credentials_path), 'token.pickle')
+            
+            # Check if token already exists
+            if os.path.exists(token_path):
+                with open(token_path, 'rb') as token:
+                    creds = self.pickle.load(token)
+            
+            # If credentials don't exist or are invalid, get new ones
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(self.Request())
+                else:
+                    flow = self.InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                
+                # Save the credentials for the next run
+                os.makedirs(os.path.dirname(token_path), exist_ok=True)
+                with open(token_path, 'wb') as token:
+                    self.pickle.dump(creds, token)
+            
+            # Build the Drive service
+            self.service = self.googleapiclient_discovery('drive', 'v3', credentials=creds)
+            
+            # Find or create the root folder
+            self.root_folder_id = self._get_or_create_root_folder()
+            
+            self.authenticated = True
+            print(f"Google Drive authentication successful, using root folder: {self.root_folder} (ID: {self.root_folder_id})")
+        except Exception as e:
+            print(f"Error authenticating with Google Drive: {e}")
+            self.authenticated = False
+    
+    def _get_or_create_root_folder(self) -> str:
+        """Find or create the root folder and return its ID."""
+        if not self.service:
+            raise Exception("Google Drive service not initialized")
+            
+        # Check if root folder exists
+        response = self.service.files().list(
+            q=f"name='{self.root_folder}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+            spaces='drive',
+            fields='files(id, name)'
+        ).execute()
+        
+        folders = response.get('files', [])
+        if folders:
+            # Use the first matching folder
+            return folders[0]['id']
+        
+        # Create the root folder if it doesn't exist
+        folder_metadata = {
+            'name': self.root_folder,
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        folder = self.service.files().create(body=folder_metadata, fields='id').execute()
+        return folder.get('id')
+    
+    def _get_parent_folder_id(self, path: str) -> str:
+        """
+        Get the ID of the parent folder for a given path.
+        Creates intermediate folders if they don't exist.
+        """
+        if not self.authenticated or not self.service:
+            raise Exception("Google Drive authentication required")
+            
+        if not path or path == '/' or path == '.':
+            return self.root_folder_id
+            
+        # Split the path into components
+        path_parts = os.path.normpath(path).split(os.sep)
+        path_parts = [p for p in path_parts if p and p != '.']
+        
+        # Start from the root folder
+        current_folder_id = self.root_folder_id
+        
+        # Navigate through each path component
+        current_path = ""
+        for i, folder_name in enumerate(path_parts[:-1]):  # All except the last component (which is the file name)
+            current_path = os.path.join(current_path, folder_name)
+            
+            # Check if this path is in cache
+            if current_path in self.path_cache:
+                current_folder_id = self.path_cache[current_path]
+                continue
+                
+            # Check if the folder exists
+            query = f"name='{folder_name}' and '{current_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            response = self.service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name)'
+            ).execute()
+            
+            folders = response.get('files', [])
+            if folders:
+                # Use the existing folder
+                current_folder_id = folders[0]['id']
+            else:
+                # Create a new folder
+                folder_metadata = {
+                    'name': folder_name,
+                    'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [current_folder_id]
+                }
+                folder = self.service.files().create(body=folder_metadata, fields='id').execute()
+                current_folder_id = folder.get('id')
+            
+            # Cache this path
+            self.path_cache[current_path] = current_folder_id
+            
+        return current_folder_id
+    
+    def _get_file_id(self, path: str) -> Optional[str]:
+        """Get the ID of a file at the given path."""
+        if not self.authenticated or not self.service:
+            return None
+            
+        # Handle empty/root path
+        if not path or path == "/" or path == ".":
+            return self.root_folder_id
+            
+        # Check if this path is in cache
+        if path in self.path_cache:
+            return self.path_cache[path]
+            
+        # Get parent folder ID and file name
+        parent_path = os.path.dirname(path)
+        file_name = os.path.basename(path)
+        
+        parent_id = self._get_parent_folder_id(parent_path)
+        
+        # Query for the file in the parent folder
+        query = f"name='{file_name}' and '{parent_id}' in parents and trashed=false"
+        response = self.service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name, mimeType)'
+        ).execute()
+        
+        files = response.get('files', [])
+        if not files:
+            return None
+            
+        file_id = files[0]['id']
+        
+        # Cache this path
+        self.path_cache[path] = file_id
+        
+        return file_id
     
     def read_file(self, path: str) -> bytes:
         """Read a file from Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            raise Exception("Google Drive authentication required")
+            
+        file_id = self._get_file_id(path)
+        if not file_id:
+            raise FileNotFoundError(f"File not found: {path}")
+            
+        try:
+            from googleapiclient.http import MediaIoBaseDownload
+            
+            # Download the file content
+            request = self.service.files().get_media(fileId=file_id)
+            file_content = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_content, request)
+            
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                
+            file_content.seek(0)
+            return file_content.read()
+        except Exception as e:
+            print(f"Error reading file from Google Drive: {e}")
+            raise
     
     def write_file(self, path: str, content: bytes) -> bool:
         """Write a file to Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            return False
+            
+        try:
+            from googleapiclient.http import MediaInMemoryUpload
+            
+            # Get parent folder ID and file name
+            parent_path = os.path.dirname(path)
+            file_name = os.path.basename(path)
+            
+            parent_id = self._get_parent_folder_id(parent_path)
+            
+            # Check if file already exists
+            file_id = self._get_file_id(path)
+            
+            # Prepare the file metadata and media content
+            file_metadata = {
+                'name': file_name,
+            }
+            
+            media = MediaInMemoryUpload(content)
+            
+            if file_id:
+                # Update existing file
+                self.service.files().update(
+                    fileId=file_id,
+                    body=file_metadata,
+                    media_body=media
+                ).execute()
+            else:
+                # Create new file
+                file_metadata['parents'] = [parent_id]
+                self.service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id'
+                ).execute()
+                
+                # Update the path cache to invalidate this path
+                if path in self.path_cache:
+                    del self.path_cache[path]
+                
+            return True
+        except Exception as e:
+            print(f"Error writing file to Google Drive: {e}")
+            return False
     
     def delete_file(self, path: str) -> bool:
         """Delete a file from Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            return False
+            
+        try:
+            file_id = self._get_file_id(path)
+            if not file_id:
+                # File doesn't exist
+                return False
+                
+            # Delete the file (move to trash)
+            self.service.files().delete(fileId=file_id).execute()
+            
+            # Update the path cache to invalidate this path
+            if path in self.path_cache:
+                del self.path_cache[path]
+                
+            return True
+        except Exception as e:
+            print(f"Error deleting file from Google Drive: {e}")
+            return False
     
     def list_files(self, path: str = "") -> List[Dict[str, Any]]:
         """List files in Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            return []
+            
+        try:
+            folder_id = self._get_file_id(path) if path else self.root_folder_id
+            if not folder_id:
+                # Folder doesn't exist
+                return []
+            
+            # Get files in the folder
+            query = f"'{folder_id}' in parents and trashed=false"
+            response = self.service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name, mimeType, size, modifiedTime, createdTime)'
+            ).execute()
+            
+            files = response.get('files', [])
+            
+            # Convert to the expected format
+            result = []
+            for item in files:
+                file_path = os.path.join(path, item['name']) if path else item['name']
+                
+                # Cache this path for future lookups
+                self.path_cache[file_path] = item['id']
+                
+                is_folder = item['mimeType'] == 'application/vnd.google-apps.folder'
+                
+                result.append({
+                    "name": item['name'],
+                    "path": file_path,
+                    "type": "directory" if is_folder else "file",
+                    "size": int(item.get('size', 0)) if 'size' in item else 0,
+                    "modified": item.get('modifiedTime'),
+                    "created": item.get('createdTime'),
+                    "id": item['id']
+                })
+                
+            return result
+        except Exception as e:
+            print(f"Error listing files from Google Drive: {e}")
+            return []
     
     def file_exists(self, path: str) -> bool:
         """Check if a file exists in Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            return False
+            
+        try:
+            file_id = self._get_file_id(path)
+            return file_id is not None
+        except Exception as e:
+            print(f"Error checking file existence in Google Drive: {e}")
+            return False
     
     def create_directory(self, path: str) -> bool:
         """Create a directory in Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            return False
+            
+        try:
+            # Check if directory already exists
+            if self.file_exists(path):
+                return True
+                
+            # Get parent folder ID and directory name
+            parent_path = os.path.dirname(path)
+            dir_name = os.path.basename(path)
+            
+            parent_id = self._get_parent_folder_id(parent_path)
+            
+            # Create the folder
+            folder_metadata = {
+                'name': dir_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [parent_id]
+            }
+            folder = self.service.files().create(body=folder_metadata, fields='id').execute()
+            
+            # Cache this path
+            self.path_cache[path] = folder.get('id')
+            
+            return True
+        except Exception as e:
+            print(f"Error creating directory in Google Drive: {e}")
+            return False
     
     def rename_file(self, old_path: str, new_path: str) -> bool:
         """Rename a file in Google Drive."""
-        raise NotImplementedError("Google Drive backend not fully implemented")
+        if not self.authenticated or not self.service:
+            return False
+            
+        try:
+            # Get the file ID for the old path
+            file_id = self._get_file_id(old_path)
+            if not file_id:
+                return False
+                
+            # Get the new parent folder ID and file name
+            new_parent_path = os.path.dirname(new_path)
+            new_file_name = os.path.basename(new_path)
+            
+            new_parent_id = self._get_parent_folder_id(new_parent_path)
+            
+            # Update the file
+            file_metadata = {
+                'name': new_file_name,
+            }
+            
+            # If the parent directory has changed, update that too
+            old_parent_path = os.path.dirname(old_path)
+            if old_parent_path != new_parent_path:
+                # Get previous parents to remove
+                file = self.service.files().get(
+                    fileId=file_id, 
+                    fields='parents'
+                ).execute()
+                previous_parents = ",".join(file.get('parents'))
+                
+                # Move the file to the new folder
+                file = self.service.files().update(
+                    fileId=file_id,
+                    body=file_metadata,
+                    addParents=new_parent_id,
+                    removeParents=previous_parents,
+                    fields='id, parents'
+                ).execute()
+            else:
+                # Just rename the file
+                file = self.service.files().update(
+                    fileId=file_id,
+                    body=file_metadata,
+                    fields='id'
+                ).execute()
+            
+            # Update path cache
+            if old_path in self.path_cache:
+                del self.path_cache[old_path]
+            self.path_cache[new_path] = file_id
+            
+            return True
+        except Exception as e:
+            print(f"Error renaming file in Google Drive: {e}")
+            return False
+            
+    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
+        """
+        Search for files matching a pattern.
+        
+        Args:
+            path: Base directory to search in
+            pattern: Regular expression pattern to match against file names
+            recursive: Whether to search recursively through subdirectories
+            
+        Returns:
+            List of matching file information dictionaries
+        """
+        if not self.authenticated or not self.service:
+            return []
+            
+        try:
+            folder_id = self._get_file_id(path) if path else self.root_folder_id
+            if not folder_id:
+                return []
+                
+            # Compile the regex pattern
+            pattern_regex = re.compile(pattern)
+            
+            # Results list
+            results = []
+            
+            # Helper function to search recursively
+            def search_folder(folder_id, current_path):
+                # Get files in the folder
+                query = f"'{folder_id}' in parents and trashed=false"
+                response = self.service.files().list(
+                    q=query,
+                    spaces='drive',
+                    fields='files(id, name, mimeType, size, modifiedTime)'
+                ).execute()
+                
+                files = response.get('files', [])
+                
+                for item in files:
+                    file_path = os.path.join(current_path, item['name']) if current_path else item['name']
+                    
+                    # Cache this path
+                    self.path_cache[file_path] = item['id']
+                    
+                    # Check if the name matches the pattern
+                    if pattern_regex.search(item['name']):
+                        is_folder = item['mimeType'] == 'application/vnd.google-apps.folder'
+                        
+                        results.append({
+                            "name": item['name'],
+                            "path": file_path,
+                            "type": "directory" if is_folder else "file",
+                            "size": int(item.get('size', 0)) if 'size' in item else 0,
+                            "modified": item.get('modifiedTime'),
+                            "id": item['id'],
+                            "match": "name"
+                        })
+                    
+                    # If it's a directory and recursive flag is set, search inside it
+                    if item['mimeType'] == 'application/vnd.google-apps.folder' and recursive:
+                        search_folder(item['id'], file_path)
+            
+            # Start the search
+            search_folder(folder_id, path)
+            return results
+        except Exception as e:
+            print(f"Error searching files in Google Drive: {e}")
+            return []
+    
+    def get_file_info(self, path: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a file.
+        
+        Args:
+            path: Path to the file
+            
+        Returns:
+            Dictionary with detailed file information
+        """
+        if not self.authenticated or not self.service:
+            return {"error": "Google Drive authentication required"}
+            
+        try:
+            file_id = self._get_file_id(path)
+            if not file_id:
+                raise FileNotFoundError(f"File not found: {path}")
+                
+            # Get file metadata
+            file = self.service.files().get(
+                fileId=file_id,
+                fields='id, name, mimeType, size, createdTime, modifiedTime, parents, description'
+            ).execute()
+            
+            # Determine if it's a directory
+            is_dir = file['mimeType'] == 'application/vnd.google-apps.folder'
+            
+            # Organize the file info
+            file_info = {
+                "name": file['name'],
+                "path": path,
+                "type": "directory" if is_dir else "file",
+                "size": int(file.get('size', 0)) if 'size' in file else 0,
+                "created": file.get('createdTime'),
+                "modified": file.get('modifiedTime'),
+                "id": file['id'],
+                "mime_type": file['mimeType'],
+            }
+            
+            if 'description' in file and file['description']:
+                file_info["description"] = file['description']
+                
+            if 'parents' in file:
+                file_info["parent_id"] = file['parents'][0]
+                
+            return file_info
+        except Exception as e:
+            print(f"Error getting file info from Google Drive: {e}")
+            return {"error": str(e)}
+    
+    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
+        """
+        Calculate a hash of the file contents.
+        
+        Args:
+            path: Path to the file
+            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
+            
+        Returns:
+            Hex digest of the hash, or None if the file doesn't exist
+        """
+        if not self.authenticated or not self.service:
+            return None
+            
+        try:
+            # Get file content
+            content = self.read_file(path)
+            
+            # Calculate the hash
+            hash_func = None
+            if hash_type == "md5":
+                hash_func = hashlib.md5()
+            elif hash_type == "sha1":
+                hash_func = hashlib.sha1()
+            elif hash_type == "sha256":
+                hash_func = hashlib.sha256()
+            else:
+                raise ValueError(f"Unsupported hash type: {hash_type}")
+                
+            hash_func.update(content)
+            return hash_func.hexdigest()
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            print(f"Error calculating file hash for Google Drive file: {e}")
+            return None
 
 
 class OneDriveStorageBackend(StorageBackend):
     """OneDrive storage backend (placeholder)."""
     
-    def __init__(self, credentials_path: str = None):
+    def __init__(self, credentials_path: str = None, root_folder: str = "OpenManus"):
         self.authenticated = False
+        self.credentials_path = credentials_path
+        self.root_folder = root_folder
         
         # In a real implementation, we would:
         # 1. Load OneDrive API credentials
         # 2. Authenticate with OneDrive
         # 3. Set up a client
         
-        # Placeholder authentication message
-        print("Note: OneDriveStorageBackend is a placeholder. Actual authentication required.")
+        if credentials_path:
+            try:
+                # Here would be the actual implementation of OneDrive API authentication
+                # Using libraries like msal (Microsoft Authentication Library) and the Microsoft Graph API
+                # 
+                # Example code (commented out since we don't have the dependencies):
+                #
+                # import msal
+                # import json
+                # import requests
+                #
+                # # Load the credentials file (should contain client_id, tenant_id, etc.)
+                # with open(credentials_path, 'r') as f:
+                #     config = json.load(f)
+                #
+                # # Create the MSAL app
+                # app = msal.PublicClientApplication(
+                #     config["client_id"],
+                #     authority=f"https://login.microsoftonline.com/{config['tenant_id']}"
+                # )
+                #
+                # # Try to get token silently from cache
+                # result = None
+                # accounts = app.get_accounts()
+                # if accounts:
+                #     result = app.acquire_token_silent(
+                #         scopes=["https://graph.microsoft.com/.default"],
+                #         account=accounts[0]
+                #     )
+                #
+                # # If no token in cache, get a new one interactively
+                # if not result:
+                #     result = app.acquire_token_interactive(
+                #         scopes=["https://graph.microsoft.com/.default"]
+                #     )
+                #
+                # # Check if we have an access token
+                # if "access_token" in result:
+                #     self.access_token = result["access_token"]
+                #     self.headers = {"Authorization": f"Bearer {self.access_token}"}
+                #
+                #     # Check if root folder exists, create if not
+                #     drive_response = requests.get(
+                #         "https://graph.microsoft.com/v1.0/me/drive/root/children",
+                #         headers=self.headers
+                #     )
+                #     
+                #     if drive_response.status_code == 200:
+                #         folders = [item for item in drive_response.json()["value"] 
+                #                   if item["name"] == self.root_folder and item["folder"]]
+                #                   
+                #         if not folders:
+                #             # Create the root folder
+                #             folder_response = requests.post(
+                #                 "https://graph.microsoft.com/v1.0/me/drive/root/children",
+                #                 headers=self.headers,
+                #                 json={
+                #                     "name": self.root_folder,
+                #                     "folder": {},
+                #                     "@microsoft.graph.conflictBehavior": "rename"
+                #                 }
+                #             )
+                #             
+                #             if folder_response.status_code == 201:
+                #                 self.root_folder_id = folder_response.json()["id"]
+                #             else:
+                #                 raise Exception(f"Failed to create root folder: {folder_response.text}")
+                #         else:
+                #             self.root_folder_id = folders[0]["id"]
+                
+                self.authenticated = True
+                print(f"OneDrive authentication successful, using root folder: {self.root_folder}")
+            except Exception as e:
+                print(f"Error authenticating with OneDrive: {e}")
+                self.authenticated = False
+        else:
+            # Placeholder authentication message
+            print("Note: OneDriveStorageBackend requires credentials_path for authentication.")
     
     def read_file(self, path: str) -> bytes:
         """Read a file from OneDrive."""
@@ -931,51 +1571,80 @@ class FileManagerTool:
     Provides a unified interface for file operations with multiple storage options.
     """
     
-    def __init__(self):
+    def __init__(self, config_path: str = None):
         """
         Initialize the file manager tool with different storage backends.
+        
+        Args:
+            config_path: Path to the configuration file. If None, uses default settings.
         """
-        # Initialize default storage base paths
-        self.base_paths = {
-            "local": "data/files/local",
-            "git": "data/files/git",
-            "google_drive": None,  # Would use credentials in a real implementation
-            "onedrive": None       # Would use credentials in a real implementation
+        # Default configuration
+        self.config = {
+            "backends": {
+                "local": {
+                    "enabled": True,
+                    "base_path": "data/files/local",
+                    "requires_auth": False
+                },
+                "git": {
+                    "enabled": True,
+                    "base_path": "data/files/git",
+                    "requires_auth": False,
+                    "user_name": "OpenManus",
+                    "user_email": "openmanus@example.com"
+                },
+                "google_drive": {
+                    "enabled": False,
+                    "requires_auth": True,
+                    "credentials_path": None,
+                    "root_folder": "OpenManus"
+                },
+                "onedrive": {
+                    "enabled": False,
+                    "requires_auth": True,
+                    "credentials_path": None,
+                    "root_folder": "OpenManus"
+                }
+            },
+            "storage_preferences": {
+                "temp": "local",
+                "code": "git",
+                "knowledge": "git",
+                "document": "git",
+                "image": "local",
+                "video": "local",
+                "audio": "local",
+                "general": "local"
+            }
         }
         
-        # Create and store storage backends
-        self.storage_backends = {
-            "local": LocalStorageBackend(self.base_paths["local"]),
-            "git": GitStorageBackend(self.base_paths["git"]),
-            # These would be properly initialized in a real implementation
-            "google_drive": None,
-            "onedrive": None
-        }
+        # Load configuration from file if provided
+        if config_path and os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    loaded_config = json.load(f)
+                    # Merge the loaded config with the default config
+                    self._merge_config(loaded_config)
+            except Exception as e:
+                print(f"Error loading configuration from {config_path}: {e}")
+                print("Using default configuration")
         
-        # Default storage preferences for different file types
-        self.storage_preferences = {
-            # Default for temporary or short-term files
-            "temp": "local",
-            
-            # Default for code and knowledge base files
-            "code": "git",
-            "knowledge": "git",
-            "document": "git",
-            
-            # Default for media files (would be Google Drive in full implementation)
-            "image": "local",
-            "video": "local",
-            "audio": "local",
-            
-            # Default for general files
-            "general": "local"
-        }
+        # Initialize storage backends based on configuration
+        self.storage_backends = {}
+        self.base_paths = {}
+        self._initialize_storage_backends()
+        
+        # Set storage preferences from config
+        self.storage_preferences = self.config["storage_preferences"]
         
         # Initialize MIME type detection
         mimetypes.init()
         
         # File tagging system
-        self.tags_file_path = os.path.join(self.base_paths["local"], ".file_tags.json")
+        self.tags_file_path = os.path.join(
+            self.config["backends"]["local"]["base_path"], 
+            ".file_tags.json"
+        )
         
         # Load existing tags if available
         self.file_tags = {}
@@ -987,32 +1656,162 @@ class FileManagerTool:
                 # Initialize with empty dict if the file is corrupted
                 self.file_tags = {}
     
+    def _merge_config(self, loaded_config: Dict[str, Any]) -> None:
+        """
+        Merge loaded configuration with default configuration.
+        
+        Args:
+            loaded_config: Configuration loaded from file
+        """
+        # Merge backends configuration
+        if "backends" in loaded_config:
+            for backend_name, backend_config in loaded_config["backends"].items():
+                if backend_name in self.config["backends"]:
+                    self.config["backends"][backend_name].update(backend_config)
+                else:
+                    self.config["backends"][backend_name] = backend_config
+        
+        # Merge storage preferences
+        if "storage_preferences" in loaded_config:
+            self.config["storage_preferences"].update(loaded_config["storage_preferences"])
+    
+    def _initialize_storage_backends(self) -> None:
+        """Initialize storage backends based on configuration."""
+        # Initialize each backend that is enabled
+        for backend_name, backend_config in self.config["backends"].items():
+            if not backend_config.get("enabled", False):
+                self.storage_backends[backend_name] = None
+                continue
+            
+            try:
+                if backend_name == "local":
+                    base_path = backend_config["base_path"]
+                    self.base_paths["local"] = base_path
+                    self.storage_backends["local"] = LocalStorageBackend(base_path)
+                
+                elif backend_name == "git":
+                    base_path = backend_config["base_path"]
+                    self.base_paths["git"] = base_path
+                    self.storage_backends["git"] = GitStorageBackend(
+                        repo_path=base_path,
+                        user_name=backend_config.get("user_name", "OpenManus"),
+                        user_email=backend_config.get("user_email", "openmanus@example.com")
+                    )
+                
+                elif backend_name == "google_drive":
+                    if backend_config["requires_auth"] and not backend_config.get("credentials_path"):
+                        print("Google Drive backend requires credentials_path to be set")
+                        self.storage_backends["google_drive"] = None
+                    else:
+                        self.storage_backends["google_drive"] = GoogleDriveStorageBackend(
+                            credentials_path=backend_config.get("credentials_path"),
+                            root_folder=backend_config.get("root_folder", "OpenManus")
+                        )
+                        self.base_paths["google_drive"] = backend_config.get("root_folder", "OpenManus")
+                
+                elif backend_name == "onedrive":
+                    if backend_config["requires_auth"] and not backend_config.get("credentials_path"):
+                        print("OneDrive backend requires credentials_path to be set")
+                        self.storage_backends["onedrive"] = None
+                    else:
+                        self.storage_backends["onedrive"] = OneDriveStorageBackend(
+                            credentials_path=backend_config.get("credentials_path"),
+                            root_folder=backend_config.get("root_folder", "OpenManus")
+                        )
+                        self.base_paths["onedrive"] = backend_config.get("root_folder", "OpenManus")
+                
+                else:
+                    print(f"Unknown backend type: {backend_name}")
+                    self.storage_backends[backend_name] = None
+            
+            except Exception as e:
+                print(f"Error initializing {backend_name} backend: {e}")
+                self.storage_backends[backend_name] = None
+    
     def initialize_backend(self, backend_type: str, **kwargs) -> bool:
         """
         Initialize or update a specific storage backend.
         
         Args:
-            backend_type: The backend to initialize ('google_drive', 'onedrive')
+            backend_type: The backend to initialize ('local', 'git', 'google_drive', 'onedrive')
             **kwargs: Backend-specific initialization parameters
+                For local: base_path
+                For git: base_path, user_name, user_email
+                For google_drive: credentials_path, root_folder
+                For onedrive: credentials_path, root_folder
             
         Returns:
             True if successful, False otherwise
         """
         try:
-            if backend_type == "google_drive":
-                credentials_path = kwargs.get("credentials_path")
-                if not credentials_path:
-                    return False
-                self.storage_backends["google_drive"] = GoogleDriveStorageBackend(credentials_path)
+            # Ensure the backend exists in the config
+            if backend_type not in self.config["backends"]:
+                self.config["backends"][backend_type] = {
+                    "enabled": True,
+                    "requires_auth": backend_type in ["google_drive", "onedrive"]
+                }
+            
+            # Enable the backend
+            self.config["backends"][backend_type]["enabled"] = True
+            
+            # Update the backend config with any provided parameters
+            for key, value in kwargs.items():
+                self.config["backends"][backend_type][key] = value
+            
+            # Initialize the backend based on the updated config
+            if backend_type == "local":
+                base_path = self.config["backends"]["local"].get("base_path", "data/files/local")
+                self.base_paths["local"] = base_path
+                self.storage_backends["local"] = LocalStorageBackend(base_path)
                 return True
+                
+            elif backend_type == "git":
+                base_path = self.config["backends"]["git"].get("base_path", "data/files/git")
+                user_name = self.config["backends"]["git"].get("user_name", "OpenManus")
+                user_email = self.config["backends"]["git"].get("user_email", "openmanus@example.com")
+                
+                self.base_paths["git"] = base_path
+                self.storage_backends["git"] = GitStorageBackend(
+                    repo_path=base_path,
+                    user_name=user_name,
+                    user_email=user_email
+                )
+                return True
+                
+            elif backend_type == "google_drive":
+                credentials_path = self.config["backends"]["google_drive"].get("credentials_path")
+                root_folder = self.config["backends"]["google_drive"].get("root_folder", "OpenManus")
+                
+                if not credentials_path:
+                    print("Google Drive backend requires credentials_path")
+                    return False
+                    
+                self.storage_backends["google_drive"] = GoogleDriveStorageBackend(
+                    credentials_path=credentials_path,
+                    root_folder=root_folder
+                )
+                self.base_paths["google_drive"] = root_folder
+                return self.storage_backends["google_drive"].authenticated
+                
             elif backend_type == "onedrive":
-                credentials_path = kwargs.get("credentials_path")
+                credentials_path = self.config["backends"]["onedrive"].get("credentials_path")
+                root_folder = self.config["backends"]["onedrive"].get("root_folder", "OpenManus")
+                
                 if not credentials_path:
+                    print("OneDrive backend requires credentials_path")
                     return False
-                self.storage_backends["onedrive"] = OneDriveStorageBackend(credentials_path)
-                return True
+                    
+                self.storage_backends["onedrive"] = OneDriveStorageBackend(
+                    credentials_path=credentials_path,
+                    root_folder=root_folder
+                )
+                self.base_paths["onedrive"] = root_folder
+                return self.storage_backends["onedrive"].authenticated
+                
             else:
+                print(f"Unknown backend type: {backend_type}")
                 return False
+                
         except Exception as e:
             print(f"Error initializing backend {backend_type}: {e}")
             return False
@@ -1886,6 +2685,71 @@ class FileManagerTool:
         except Exception as e:
             print(f"Error synchronizing file: {e}")
             return False
+    
+    def save_config(self, config_path: str) -> bool:
+        """
+        Save the current configuration to a file.
+        
+        Args:
+            config_path: Path to save the configuration to
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Create parent directory if needed
+            os.makedirs(os.path.dirname(config_path), exist_ok=True)
+            
+            # Write the config file
+            with open(config_path, 'w') as f:
+                json.dump(self.config, f, indent=2)
+                
+            return True
+        except Exception as e:
+            print(f"Error saving configuration: {e}")
+            return False
+    
+    def load_config(self, config_path: str) -> bool:
+        """
+        Load configuration from a file.
+        
+        Args:
+            config_path: Path to the configuration file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not os.path.exists(config_path):
+                print(f"Configuration file not found: {config_path}")
+                return False
+                
+            # Load the configuration file
+            with open(config_path, 'r') as f:
+                loaded_config = json.load(f)
+                
+            # Merge with default config
+            self._merge_config(loaded_config)
+            
+            # Re-initialize storage backends
+            self._initialize_storage_backends()
+            
+            # Update storage preferences
+            self.storage_preferences = self.config["storage_preferences"]
+            
+            return True
+        except Exception as e:
+            print(f"Error loading configuration: {e}")
+            return False
+    
+    def get_config(self) -> Dict[str, Any]:
+        """
+        Get the current configuration.
+        
+        Returns:
+            Dictionary containing the current configuration
+        """
+        return self.config
     
     def detect_file_type(self, path: str, storage_type: Optional[str] = None) -> str:
         """
