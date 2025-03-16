@@ -22,6 +22,7 @@ This repository provides a starting point for developers and researchers to buil
 - **Task Execution**: Supports tasks like travel planning, data analysis, and content generation.
 - **Tool Integration**: Web browsing, code execution, and data retrieval capabilities.
 - **Memory System**: Persistent memory across sessions with namespaces, search, and metadata.
+- **Vector Database**: Semantic search using FAISS and sentence embeddings for intelligent retrieval.
 - **Modular Design**: Easily extendable with new agents, tools, or features.
 - **Multiple LLM Support**: Integration with OpenAI (GPT-4o), Anthropic (Claude), and local models.
 - **LLM Preference System**: Customize which LLM to use for specific agents and tools.
@@ -83,6 +84,10 @@ python src/client.py memory list  # List all memory namespaces
 python src/client.py memory store --namespace research --content "Tesla announced a new product" --metadata '{"source": "news", "date": "2024-03-15"}'
 python src/client.py memory get-all --namespace research  # Get all memories in the research namespace
 python src/client.py memory search --namespace research --query "Tesla"  # Search for memories
+
+# Vector database (semantic search) examples
+python examples/vector_db_usage.py  # Run the vector database demo
+# Try the example with your own queries to see semantic search in action
 ```
 
 ### Project Structure
@@ -236,6 +241,46 @@ Response: {
 }
 ```
 
+**GET /vector-db/collections**: List all vector collections.
+```json
+Response: {
+  "collections": ["research", "knowledge_base", "user_data"]
+}
+```
+
+**POST /vector-db/collections/{collection_name}/documents**: Add a document to a vector collection.
+```json
+Body: {
+  "text": "The Transformer architecture has revolutionized NLP",
+  "metadata": {"topic": "AI", "source": "research paper"},
+  "external_id": "doc123" // optional
+}
+Response: {
+  "status": "success",
+  "id": "doc123"
+}
+```
+
+**GET /vector-db/collections/{collection_name}/search**: Semantic search in a vector collection.
+```json
+Query parameters:
+  - query: The search query
+  - k: Number of results to return (default: 5)
+  
+Response: {
+  "results": [
+    {
+      "id": "doc123",
+      "text": "The Transformer architecture has revolutionized NLP",
+      "metadata": {"topic": "AI", "source": "research paper"},
+      "timestamp": "2024-03-15T14:30:45.123456",
+      "similarity": 0.92
+    },
+    ...
+  ]
+}
+```
+
 **GET /llm/recommendations**: Get current LLM recommendations for agents and tools.
 ```json
 Response: {
@@ -277,13 +322,14 @@ Please read `CONTRIBUTING.md` for guidelines.
 ### Roadmap
 - ✅ Implement core multi-agent coordination
 - ✅ Add persistent memory system for context retention
+- ✅ Add vector embedding database for semantic search
 - Add support for GAIA benchmark tasks
 - Integrate advanced NLP models (e.g., LLaMA, Grok)
 - Enhance toolset with:
   - Real-time web scraping and visualization
-  - Vector embedding memory for semantic search
   - File management system
   - Document processing capabilities
+  - Advanced RAG (Retrieval Augmented Generation) capabilities
 - Release v1.0 with stable task execution
 
 ### Inspiration

@@ -190,6 +190,184 @@ def clear_namespace(namespace):
         logger.error(f"Error clearing namespace: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+# Vector database endpoints
+@app.route('/vector-db/collections', methods=['GET'])
+def list_vector_collections():
+    """List all vector collections"""
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        collections = coordinator.tools['vector_db'].list_collections()
+        return jsonify({'collections': collections})
+    except Exception as e:
+        logger.error(f"Error listing vector collections: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections', methods=['POST'])
+def create_vector_collection():
+    """Create a new vector collection"""
+    data = request.get_json()
+    collection_name = data.get('collection_name')
+    
+    if not collection_name:
+        return jsonify({'error': 'No collection name provided'}), 400
+    
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        result = coordinator.tools['vector_db'].create_collection(collection_name)
+        if not result:
+            return jsonify({'error': 'Collection already exists'}), 409
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error creating vector collection: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>', methods=['DELETE'])
+def delete_vector_collection(collection_name):
+    """Delete a vector collection"""
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        result = coordinator.tools['vector_db'].delete_collection(collection_name)
+        if not result:
+            return jsonify({'error': 'Collection not found'}), 404
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error deleting vector collection: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>/stats', methods=['GET'])
+def get_vector_collection_stats(collection_name):
+    """Get statistics for a vector collection"""
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        stats = coordinator.tools['vector_db'].get_collection_stats(collection_name)
+        if not stats:
+            return jsonify({'error': 'Collection not found'}), 404
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Error getting vector collection stats: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>/documents', methods=['POST'])
+def add_vector_document(collection_name):
+    """Add a document to a vector collection"""
+    data = request.get_json()
+    text = data.get('text')
+    metadata = data.get('metadata')
+    external_id = data.get('external_id')
+    
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+    
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        doc_id = coordinator.tools['vector_db'].add_text(
+            collection_name=collection_name,
+            text=text,
+            metadata=metadata,
+            external_id=external_id
+        )
+        
+        if not doc_id:
+            return jsonify({'error': 'Failed to add document'}), 400
+            
+        return jsonify({'status': 'success', 'id': doc_id})
+    except Exception as e:
+        logger.error(f"Error adding vector document: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>/search', methods=['GET'])
+def search_vector_collection(collection_name):
+    """Search a vector collection"""
+    query = request.args.get('query')
+    k = request.args.get('k', 5, type=int)
+    
+    if not query:
+        return jsonify({'error': 'No query provided'}), 400
+    
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        results = coordinator.tools['vector_db'].search(
+            collection_name=collection_name,
+            query=query,
+            k=k
+        )
+        
+        return jsonify({'results': results})
+    except Exception as e:
+        logger.error(f"Error searching vector collection: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>/documents/<doc_id>', methods=['GET'])
+def get_vector_document(collection_name, doc_id):
+    """Get a document from a vector collection"""
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        doc = coordinator.tools['vector_db'].get_by_id(collection_name, doc_id)
+        if not doc:
+            return jsonify({'error': 'Document not found'}), 404
+            
+        return jsonify({'document': doc})
+    except Exception as e:
+        logger.error(f"Error getting vector document: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>/documents/<doc_id>', methods=['PUT'])
+def update_vector_document_metadata(collection_name, doc_id):
+    """Update metadata for a document in a vector collection"""
+    data = request.get_json()
+    metadata = data.get('metadata')
+    
+    if not metadata:
+        return jsonify({'error': 'No metadata provided'}), 400
+    
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        result = coordinator.tools['vector_db'].update_metadata(
+            collection_name=collection_name,
+            doc_id=doc_id,
+            metadata=metadata
+        )
+        
+        if not result:
+            return jsonify({'error': 'Document not found'}), 404
+            
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error updating vector document metadata: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/vector-db/collections/<collection_name>/documents/<doc_id>', methods=['DELETE'])
+def delete_vector_document(collection_name, doc_id):
+    """Delete a document from a vector collection"""
+    try:
+        if 'vector_db' not in coordinator.tools:
+            return jsonify({'error': 'Vector database not available'}), 503
+            
+        result = coordinator.tools['vector_db'].delete_by_id(collection_name, doc_id)
+        if not result:
+            return jsonify({'error': 'Document not found'}), 404
+            
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error deleting vector document: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 if __name__ == '__main__':
     # Configure and initialize the LLM providers based on environment variables
     app.run(host='0.0.0.0', port=5000)

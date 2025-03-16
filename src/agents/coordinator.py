@@ -31,13 +31,29 @@ class TaskCoordinator:
         from src.tools.code_executor import CodeExecutorTool
         from src.tools.data_retriever import DataRetrieverTool
         from src.tools.memory_tool import MemoryTool
-        return {
+        
+        # Import VectorDBTool with error handling since it has extra dependencies
+        try:
+            from src.tools.vector_db_tool import VectorDBTool
+            vector_db = VectorDBTool()
+        except ImportError as e:
+            print(f"VectorDBTool could not be initialized: {e}")
+            print("Install required dependencies with: pip install faiss-cpu sentence-transformers")
+            vector_db = None
+            
+        tools = {
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
             'data_retriever': DataRetrieverTool(),
             'memory': MemoryTool(),
             'llm_service': self.llm_service
         }
+        
+        # Add vector_db if available
+        if vector_db:
+            tools['vector_db'] = vector_db
+            
+        return tools
     
     def _set_default_preferences(self):
         """Set default LLM preferences for agents and tools."""
@@ -134,6 +150,7 @@ class PlannerAgent:
                 2. code_executor - Execute code snippets in various languages
                 3. data_retriever - Retrieve data from various sources
                 4. memory - Store and retrieve information across sessions
+                5. vector_db - Semantic search using vector embeddings
                 
                 Memory tool supports the following operations:
                 - store: Store information (content, metadata, namespace)
@@ -144,11 +161,25 @@ class PlannerAgent:
                 - delete: Delete a memory
                 - list_namespaces: List all available namespaces
                 
+                Vector DB tool supports the following operations:
+                - create_collection: Create a new vector collection
+                - delete_collection: Delete a collection
+                - list_collections: List all available collections
+                - add_text: Add text to a collection (with optional metadata)
+                - add_texts: Add multiple texts to a collection (batch operation)
+                - search: Semantic search for similar documents
+                - get_by_id: Get document by ID
+                - delete_by_id: Delete document by ID
+                - clear_collection: Clear all documents from a collection
+                - update_metadata: Update metadata for a document
+                - get_collection_stats: Get collection statistics
+                
                 Return a JSON object with the following structure:
                 {{
                     "steps": [
                         {{"agent": "tool", "action": "use_tool", "tool_name": "web_browser", "tool_args": {{"url": "example.com"}}}},
                         {{"agent": "tool", "action": "use_tool", "tool_name": "memory", "tool_args": {{"operation": "store", "content": "Important information", "namespace": "research"}}}},
+                        {{"agent": "tool", "action": "use_tool", "tool_name": "vector_db", "tool_args": {{"operation": "add_text", "collection_name": "docs", "text": "Document content", "metadata": {{"source": "web"}}}}}},
                         ...
                     ]
                 }}
@@ -284,6 +315,52 @@ class ToolAgent:
                     return "Namespace cleared successfully" if result else "Namespace not found"
                 else:
                     return f"Unknown memory operation: {operation}"
+            elif tool_name == 'vector_db':
+                # Handle vector database operations
+                operation = tool_args.get('operation')
+                if not operation:
+                    return "Error: VectorDB tool requires an 'operation' argument"
+                
+                # Remove operation from args since it's not a parameter of the methods
+                tool_args_copy = tool_args.copy()
+                del tool_args_copy['operation']
+                
+                # Call the appropriate method based on operation
+                if operation == 'create_collection':
+                    result = tool.create_collection(**tool_args_copy)
+                    return f"Collection created: {result}"
+                elif operation == 'delete_collection':
+                    result = tool.delete_collection(**tool_args_copy)
+                    return f"Collection deleted: {result}"
+                elif operation == 'list_collections':
+                    result = tool.list_collections()
+                    return f"Available collections: {result}"
+                elif operation == 'add_text':
+                    result = tool.add_text(**tool_args_copy)
+                    return f"Document added with ID: {result}"
+                elif operation == 'add_texts':
+                    result = tool.add_texts(**tool_args_copy)
+                    return f"Added {len(result)} documents with IDs: {result}"
+                elif operation == 'search':
+                    result = tool.search(**tool_args_copy)
+                    return f"Found {len(result)} similar documents: {result}"
+                elif operation == 'get_by_id':
+                    result = tool.get_by_id(**tool_args_copy)
+                    return result if result else "Document not found"
+                elif operation == 'delete_by_id':
+                    result = tool.delete_by_id(**tool_args_copy)
+                    return "Document deleted successfully" if result else "Document not found"
+                elif operation == 'clear_collection':
+                    result = tool.clear_collection(**tool_args_copy)
+                    return "Collection cleared successfully" if result else "Collection not found"
+                elif operation == 'update_metadata':
+                    result = tool.update_metadata(**tool_args_copy)
+                    return "Metadata updated successfully" if result else "Document not found"
+                elif operation == 'get_collection_stats':
+                    result = tool.get_collection_stats(**tool_args_copy)
+                    return f"Collection stats: {result}" if result else "Collection not found"
+                else:
+                    return f"Unknown vector_db operation: {operation}"
             elif tool_name == 'llm_service':
                 # Direct access to LLM service as a tool
                 if 'prompt' in tool_args:
