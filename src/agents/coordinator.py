@@ -1,17 +1,29 @@
+from src.tools.llm_service import initialize_llm_service
+
 class TaskCoordinator:
     """Coordinates tasks between multiple agents and tools."""
 
     def __init__(self):
         self.agents = {}  # Will store initialized agents
         self.tools = {}   # Will store available tools
+        self.llm_service = None
         self._initialize_system()
 
     def _initialize_system(self):
         """Initialize the multi-agent system and tools."""
-        self.agents['planner'] = PlannerAgent()
-        self.agents['executor'] = ExecutionAgent()
-        self.agents['tool'] = ToolAgent() # Generic tool agent for now
+        # Initialize LLM service first
+        self.llm_service = initialize_llm_service()
+        
+        # Initialize agents with LLM service
+        self.agents['planner'] = PlannerAgent(self.llm_service)
+        self.agents['executor'] = ExecutionAgent(self.llm_service)
+        self.agents['tool'] = ToolAgent(self.llm_service)
+        
+        # Initialize tools
         self.tools = self._initialize_tools()
+        
+        # Set default LLM preferences for agents and tools
+        self._set_default_preferences()
 
     def _initialize_tools(self):
         """Initialize and return available tools."""
@@ -22,7 +34,33 @@ class TaskCoordinator:
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
             'data_retriever': DataRetrieverTool(),
+            'llm_service': self.llm_service
         }
+    
+    def _set_default_preferences(self):
+        """Set default LLM preferences for agents and tools."""
+        # Only set preferences if we have appropriate providers available
+        providers = self.llm_service.list_providers()
+        available_providers = [p["name"] for p in providers]
+        
+        # Set default preferences if providers are available
+        if "gpt4o" in available_providers:
+            self.llm_service.set_agent_preference(
+                "planner", "gpt4o", 
+                "GPT-4o is well-suited for complex planning tasks requiring reasoning"
+            )
+        
+        if "claude" in available_providers:
+            self.llm_service.set_agent_preference(
+                "executor", "claude", 
+                "Claude's safety and reliability make it good for execution"
+            )
+            
+        if "local" in available_providers:
+            self.llm_service.set_tool_preference(
+                "web_browser", "local", 
+                "Local LLM is sufficient for basic web parsing and reduces costs"
+            )
 
     def execute_task(self, task_description):
         """
@@ -40,21 +78,98 @@ class TaskCoordinator:
             "status": "success",
             "result": result
         }
+    
+    def set_llm_preference(self, entity_type, entity_name, provider_name, reason=""):
+        """
+        Set LLM preference for a specific agent or tool.
+        
+        Args:
+            entity_type (str): Either 'agent' or 'tool'
+            entity_name (str): Name of the agent or tool
+            provider_name (str): Name of the LLM provider
+            reason (str): Reason for this preference
+        """
+        if entity_type == "agent":
+            self.llm_service.set_agent_preference(entity_name, provider_name, reason)
+        elif entity_type == "tool":
+            self.llm_service.set_tool_preference(entity_name, provider_name, reason)
+        else:
+            raise ValueError(f"Invalid entity type: {entity_type}")
+    
+    def get_provider_recommendations(self):
+        """Get LLM provider recommendations for agents and tools."""
+        recommendations = {
+            "providers": self.llm_service.list_providers(),
+            "agent_preferences": self.llm_service.agent_preferences,
+            "tool_preferences": self.llm_service.tool_preferences
+        }
+        return recommendations
 
 
 class PlannerAgent:
     """Agent responsible for planning tasks."""
+    
+    def __init__(self, llm_service=None):
+        self.llm_service = llm_service
+    
     def plan_task(self, task_description):
         """Generates a task execution plan."""
-        # Placeholder plan: Use web_browser tool
+        # If we have LLM service, use it to generate a plan
+        if self.llm_service:
+            try:
+                # Get preferred provider for this agent
+                prompt = f"""
+                Generate a step-by-step execution plan for the following task:
+                "{task_description}"
+                
+                The plan should use available tools: web_browser, code_executor, data_retriever.
+                
+                Return a JSON object with the following structure:
+                {{
+                    "steps": [
+                        {{"agent": "tool", "action": "use_tool", "tool_name": "web_browser", "tool_args": {{"url": "example.com"}}}},
+                        ...
+                    ]
+                }}
+                
+                ONLY return valid JSON without explanation or additional text.
+                """
+                
+                # Generate plan using LLM
+                result = self.llm_service.generate(
+                    prompt=prompt,
+                    provider_name=self.llm_service.get_preferred_provider("planner", "agent").capabilities["type"]
+                )
+                
+                # Extract JSON from result (naive implementation - would be more robust in production)
+                import json
+                try:
+                    # Try to find json between curly braces
+                    start = result.find('{')
+                    end = result.rfind('}') + 1
+                    if start >= 0 and end > start:
+                        json_str = result[start:end]
+                        return json.loads(json_str)
+                except:
+                    # Fallback to default plan if parsing fails
+                    pass
+            except Exception as e:
+                print(f"Error generating plan with LLM: {e}")
+        
+        # Fallback plan if LLM is not available or fails
         return {
             "steps": [
                 {"agent": "tool", "action": "use_tool", "tool_name": "web_browser", "tool_args": {"url": "https://www.example.com"}}
             ]
         }
 
+
 class ExecutionAgent:
     """Agent responsible for executing task plans."""
+    
+    def __init__(self, llm_service=None):
+        self.llm_service = llm_service
+    
     def execute_plan(self, plan, agents, tools):
         """Executes a given task plan."""
         results = []
@@ -65,23 +180,56 @@ class ExecutionAgent:
                 tool_name = step['tool_name']
                 tool_args = step['tool_args']
                 tool_result = agents['tool'].use_tool(tool_name, tool_args, tools)
-                results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {tool_result}")
+                
+                # Use LLM to summarize the tool result if available
+                if self.llm_service and len(str(tool_result)) > 500:
+                    try:
+                        prompt = f"Summarize the following tool result concisely:\n{tool_result}"
+                        summary = self.llm_service.generate(
+                            prompt=prompt,
+                            provider_name=self.llm_service.get_preferred_provider("executor", "agent").capabilities["type"]
+                        )
+                        results.append(f"Tool '{tool_name}' used with args {tool_args}. Result summary: {summary}")
+                    except Exception as e:
+                        print(f"Error summarizing result with LLM: {e}")
+                        results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {tool_result}")
+                else:
+                    results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {tool_result}")
             else:
                 results.append(f"Unknown step: {step}")
-        return "\\n".join(results)
+        return "\n".join(results)
+
 
 class ToolAgent:
     """Agent responsible for using tools."""
+    
+    def __init__(self, llm_service=None):
+        self.llm_service = llm_service
+    
     def use_tool(self, tool_name, tool_args, tools):
         """Uses a specific tool to perform an action."""
         if tool_name in tools:
             tool = tools[tool_name]
+            
+            # If using LLM with tools, get preferred provider
+            if self.llm_service and tool_name in self.llm_service.tool_preferences:
+                provider_type = self.llm_service.get_preferred_provider(tool_name, "tool").capabilities["type"]
+                print(f"Using {provider_type} for tool: {tool_name}")
+                
+            # Execute the tool
             if tool_name == 'web_browser':
                 return tool.browse_web(**tool_args)
             elif tool_name == 'code_executor':
                 return tool.execute_code(**tool_args)
             elif tool_name == 'data_retriever':
                 return tool.retrieve_data(**tool_args)
+            elif tool_name == 'llm_service':
+                # Direct access to LLM service as a tool
+                if 'prompt' in tool_args:
+                    provider = tool_args.get('provider', None)
+                    return tool.generate(tool_args['prompt'], provider_name=provider)
+                else:
+                    return "Error: LLM service requires a 'prompt' argument"
             else:
                 return f"Tool '{tool_name}' not yet fully implemented."
         else:

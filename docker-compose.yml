@@ -6,11 +6,18 @@ services:
       context: .
       dockerfile: docker/unified/Dockerfile
     ports:
-      - "5000:5000"
+      - "5000:5000"  # API port
+      - "5001:5001"  # Tools port
+    env_file:
+      - .env
     environment:
       - PYTHONPATH=/app
       - FLASK_APP=src/server.py
       - FLASK_ENV=development
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./.env:/app/.env
 
   frontend:
     build:

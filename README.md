@@ -22,6 +22,8 @@ This repository provides a starting point for developers and researchers to buil
 - **Task Execution**: Supports tasks like travel planning, data analysis, and content generation.
 - **Tool Integration**: Web browsing, code execution, and data retrieval capabilities.
 - **Modular Design**: Easily extendable with new agents, tools, or features.
+- **Multiple LLM Support**: Integration with OpenAI (GPT-4o), Anthropic (Claude), and local models.
+- **LLM Preference System**: Customize which LLM to use for specific agents and tools.
 - **Community-Driven**: Open to contributions and enhancements.
 
 ## Prerequisites
@@ -54,13 +56,26 @@ This will launch:
 
 ### 3. Test the System
 Once running, you can interact with OpenManus via:
-- CLI: Use the provided Python client (`python client.py`)
+- CLI: Use the provided Python client
 - API: Send requests to http://localhost:5000 (see API docs below)
 - Web UI: Access http://localhost:3000
 
-Example CLI command:
+Example CLI commands:
 ```bash
-python client.py --task "Plan a 3-day trip to Tokyo"
+# Execute a task
+python src/client.py task --task "Plan a 3-day trip to Tokyo"
+
+# Check system status and available LLM providers
+python src/client.py status
+
+# List available LLM providers and their capabilities
+python src/client.py llm list
+
+# Get current LLM preferences for agents and tools
+python src/client.py llm recommendations 
+
+# Set Claude as the preferred provider for the planner agent
+python src/client.py llm preference --type agent --name planner --provider claude --reason "Better at creative planning"
 ```
 
 ### Project Structure
@@ -85,7 +100,26 @@ OpenManus/
 ```
 
 ### Configuration
-Edit the `docker-compose.yml` file to customize:
+
+1. **Copy the example environment file:**
+```bash
+cp .env.example .env
+```
+
+2. **Edit the `.env` file to configure your LLM providers:**
+```bash
+# OpenAI settings
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Anthropic settings
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Local LLM settings (optional)
+ENABLE_LOCAL_LLM=true
+LOCAL_LLM_PATH=models/llama3
+```
+
+3. **Edit the `docker-compose.yml` file to customize:**
 ```yaml
 services:
   backend:
@@ -94,6 +128,8 @@ services:
       dockerfile: docker/unified/Dockerfile
     ports:
       - "5000:5000"  # API port
+    env_file:
+      - .env
     environment:
       - WEB_BROWSER_API_KEY=your_key_here
     volumes:
@@ -119,9 +155,61 @@ Body: { "task": "Analyze Tesla stock trends" }
 Response: { "status": "success", "result": "..." }
 ```
 
-**GET /status**: Check system health.
+**GET /status**: Check system health and available LLM providers.
 ```json
-Response: { "status": "running" }
+Response: { 
+  "status": "running",
+  "llm_providers": ["gpt4o", "claude", "local"]
+}
+```
+
+**GET /llm/providers**: List all available LLM providers with capabilities.
+```json
+Response: {
+  "providers": [
+    {
+      "name": "gpt4o",
+      "capabilities": {
+        "type": "openai",
+        "coding": 5,
+        "reasoning": 5,
+        "creativity": 4,
+        "knowledge": 5,
+        "context_length": 128000,
+        "latency": "medium",
+        "privacy": "low",
+        "cost": "high"
+      }
+    },
+    ...
+  ]
+}
+```
+
+**GET /llm/recommendations**: Get current LLM recommendations for agents and tools.
+```json
+Response: {
+  "providers": [...],
+  "agent_preferences": {
+    "planner": {
+      "provider": "gpt4o",
+      "reason": "GPT-4o is well-suited for complex planning tasks requiring reasoning"
+    },
+    ...
+  },
+  "tool_preferences": {...}
+}
+```
+
+**POST /llm/preference**: Set LLM preference for a specific agent or tool.
+```json
+Body: {
+  "entity_type": "agent",  // "agent" or "tool"
+  "entity_name": "planner",  // agent or tool name 
+  "provider_name": "claude",  // LLM provider name
+  "reason": "Better at breaking down complex tasks"  // optional
+}
+Response: { "status": "success" }
 ```
 
 Full API docs are available in `docs/api.md`.
