@@ -1,11 +1,18 @@
 import os
+import io
+import re
 import json
 import shutil
+import hashlib
+import zipfile
+import tarfile
+import gzip
 import pathlib
-from typing import Dict, List, BinaryIO, Optional, Union, Tuple, Any
+import mimetypes
+import subprocess
 from datetime import datetime
 from abc import ABC, abstractmethod
-import subprocess
+from typing import Dict, List, BinaryIO, Optional, Union, Tuple, Any, Set, Iterator
 
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
@@ -44,6 +51,48 @@ class StorageBackend(ABC):
     def rename_file(self, old_path: str, new_path: str) -> bool:
         """Rename or move a file."""
         pass
+    
+    @abstractmethod
+    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
+        """
+        Search for files matching a pattern.
+        
+        Args:
+            path: Base directory to search in
+            pattern: Regular expression pattern to match against file names
+            recursive: Whether to search recursively through subdirectories
+            
+        Returns:
+            List of matching file information dictionaries
+        """
+        pass
+    
+    @abstractmethod
+    def get_file_info(self, path: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a file.
+        
+        Args:
+            path: Path to the file
+            
+        Returns:
+            Dictionary with detailed file information
+        """
+        pass
+    
+    @abstractmethod
+    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
+        """
+        Calculate a hash of the file contents.
+        
+        Args:
+            path: Path to the file
+            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
+            
+        Returns:
+            Hex digest of the hash, or None if the file doesn't exist
+        """
+        pass
 
 
 class LocalStorageBackend(StorageBackend):
@@ -52,6 +101,8 @@ class LocalStorageBackend(StorageBackend):
     def __init__(self, base_path: str = "data/files/local"):
         self.base_path = pathlib.Path(base_path)
         os.makedirs(self.base_path, exist_ok=True)
+        # Initialize mimetypes
+        mimetypes.init()
     
     def _full_path(self, path: str) -> pathlib.Path:
         """Get the full path by joining with base_path."""
@@ -148,6 +199,143 @@ class LocalStorageBackend(StorageBackend):
         except Exception as e:
             print(f"Error renaming file: {e}")
             return False
+    
+    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
+        """
+        Search for files matching a pattern.
+        
+        Args:
+            path: Base directory to search in
+            pattern: Regular expression pattern to match against file names
+            recursive: Whether to search recursively through subdirectories
+            
+        Returns:
+            List of matching file information dictionaries
+        """
+        try:
+            full_path = self._full_path(path)
+            if not full_path.exists():
+                return []
+            
+            results = []
+            pattern_regex = re.compile(pattern)
+            
+            # Define a recursive function to walk directories
+            def walk_directory(current_path):
+                for item in current_path.iterdir():
+                    # Check if the item name matches the pattern
+                    if pattern_regex.search(item.name):
+                        stat = item.stat()
+                        relative_path = str(item.relative_to(self.base_path))
+                        results.append({
+                            "name": item.name,
+                            "path": relative_path,
+                            "type": "directory" if item.is_dir() else "file",
+                            "size": stat.st_size if item.is_file() else 0,
+                            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                            "match": "name"  # Indicate that the name matched the pattern
+                        })
+                    
+                    # If it's a directory and we're searching recursively, search inside it
+                    if item.is_dir() and recursive:
+                        walk_directory(item)
+            
+            # Start the search
+            walk_directory(full_path)
+            return results
+        except Exception as e:
+            print(f"Error searching files: {e}")
+            return []
+    
+    def get_file_info(self, path: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a file.
+        
+        Args:
+            path: Path to the file
+            
+        Returns:
+            Dictionary with detailed file information
+        """
+        try:
+            full_path = self._full_path(path)
+            if not full_path.exists():
+                raise FileNotFoundError(f"File not found: {path}")
+            
+            stat = full_path.stat()
+            file_info = {
+                "name": full_path.name,
+                "path": str(full_path.relative_to(self.base_path)),
+                "type": "directory" if full_path.is_dir() else "file",
+                "size": stat.st_size if full_path.is_file() else 0,
+                "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "accessed": datetime.fromtimestamp(stat.st_atime).isoformat(),
+                "permissions": oct(stat.st_mode)[-3:],  # Last 3 digits of octal mode
+            }
+            
+            # Add additional information for files
+            if full_path.is_file():
+                # Guess MIME type
+                mime_type, encoding = mimetypes.guess_type(full_path)
+                file_info["mime_type"] = mime_type or "application/octet-stream"
+                if encoding:
+                    file_info["encoding"] = encoding
+                
+                # Check if it's a text file (simple heuristic)
+                try:
+                    with open(full_path, 'rb') as f:
+                        sample = f.read(1024)  # Read a sample of the file
+                        # Check if it's likely to be text
+                        is_text = True
+                        for byte in sample:
+                            if byte < 9 or (byte > 13 and byte < 32 and byte != 127):
+                                is_text = False
+                                break
+                        file_info["is_text"] = is_text
+                except:
+                    file_info["is_text"] = False
+            
+            return file_info
+        except Exception as e:
+            print(f"Error getting file info: {e}")
+            return {"error": str(e)}
+    
+    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
+        """
+        Calculate a hash of the file contents.
+        
+        Args:
+            path: Path to the file
+            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
+            
+        Returns:
+            Hex digest of the hash, or None if the file doesn't exist
+        """
+        try:
+            full_path = self._full_path(path)
+            if not full_path.exists() or not full_path.is_file():
+                return None
+            
+            hash_func = None
+            if hash_type == "md5":
+                hash_func = hashlib.md5()
+            elif hash_type == "sha1":
+                hash_func = hashlib.sha1()
+            elif hash_type == "sha256":
+                hash_func = hashlib.sha256()
+            else:
+                raise ValueError(f"Unsupported hash type: {hash_type}")
+            
+            with open(full_path, 'rb') as f:
+                # Read in chunks to handle large files
+                for chunk in iter(lambda: f.read(4096), b''):
+                    hash_func.update(chunk)
+            
+            return hash_func.hexdigest()
+        except Exception as e:
+            print(f"Error calculating file hash: {e}")
+            return None
 
 
 class GitStorageBackend(StorageBackend):
@@ -158,6 +346,9 @@ class GitStorageBackend(StorageBackend):
         
         # Ensure the repo path exists
         os.makedirs(self.repo_path, exist_ok=True)
+        
+        # Initialize mimetypes
+        mimetypes.init()
         
         # Check if it's a git repo, initialize if not
         if not (self.repo_path / ".git").exists():
@@ -428,6 +619,221 @@ class GitStorageBackend(StorageBackend):
         except Exception as e:
             print(f"Error getting file history: {e}")
             return []
+            
+    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
+        """
+        Search for files matching a pattern in the git repository.
+        
+        Args:
+            path: Base directory to search in
+            pattern: Regular expression pattern to match against file names
+            recursive: Whether to search recursively through subdirectories
+            
+        Returns:
+            List of matching file information dictionaries
+        """
+        try:
+            full_path = self._full_path(path)
+            if not full_path.exists():
+                return []
+            
+            results = []
+            pattern_regex = re.compile(pattern)
+            
+            # Use git ls-files for a more git-aware search
+            git_cmd = ["git", "ls-files", "--full-name"]
+            if not recursive:
+                # Add path with trailing slash to list only direct children
+                search_path = str(pathlib.Path(path)) + ("/" if path else "")
+                git_cmd.append(search_path)
+            else:
+                # Search recursively from the specified path
+                if path:
+                    git_cmd.append(path)
+            
+            ls_files = subprocess.run(
+                git_cmd,
+                cwd=self.repo_path, check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            
+            file_list = ls_files.stdout.decode().strip().split("\n")
+            for file_path in file_list:
+                if not file_path:
+                    continue
+                
+                # Check if the file matches the pattern
+                file_name = os.path.basename(file_path)
+                if pattern_regex.search(file_name):
+                    full_file_path = self._full_path(file_path)
+                    
+                    # Get file info
+                    try:
+                        stat = full_file_path.stat()
+                        
+                        # Get last commit timestamp for the file
+                        git_info = subprocess.run(
+                            ["git", "log", "-1", "--format=%at", "--", file_path],
+                            cwd=self.repo_path, check=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                        )
+                        last_commit_time = git_info.stdout.decode().strip()
+                        
+                        if last_commit_time:
+                            modified = datetime.fromtimestamp(int(last_commit_time)).isoformat()
+                        else:
+                            modified = datetime.fromtimestamp(stat.st_mtime).isoformat()
+                        
+                        results.append({
+                            "name": file_name,
+                            "path": file_path,
+                            "type": "file",  # Git ls-files only returns files
+                            "size": stat.st_size,
+                            "modified": modified,
+                            "match": "name"  # Indicate that the name matched the pattern
+                        })
+                    except (FileNotFoundError, subprocess.SubprocessError):
+                        # Skip files that can't be accessed
+                        continue
+            
+            return results
+        except Exception as e:
+            print(f"Error searching files in git repository: {e}")
+            return []
+    
+    def get_file_info(self, path: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a file in the git repository.
+        
+        Args:
+            path: Path to the file
+            
+        Returns:
+            Dictionary with detailed file information
+        """
+        try:
+            full_path = self._full_path(path)
+            if not full_path.exists():
+                raise FileNotFoundError(f"File not found: {path}")
+            
+            stat = full_path.stat()
+            
+            # Get git-specific information
+            git_info = {}
+            
+            # Get last commit info
+            try:
+                last_commit = subprocess.run(
+                    ["git", "log", "-1", "--format=%H|%an|%ae|%at|%s", "--", path],
+                    cwd=self.repo_path, check=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                
+                commit_info = last_commit.stdout.decode().strip()
+                if commit_info:
+                    parts = commit_info.split("|")
+                    if len(parts) == 5:
+                        commit_hash, author_name, author_email, timestamp, message = parts
+                        git_info["last_commit"] = {
+                            "hash": commit_hash,
+                            "author": author_name,
+                            "email": author_email,
+                            "timestamp": datetime.fromtimestamp(int(timestamp)).isoformat(),
+                            "message": message
+                        }
+            except subprocess.SubprocessError:
+                # Failed to get git info, continue without it
+                pass
+                
+            # Build the file info dictionary
+            file_info = {
+                "name": full_path.name,
+                "path": str(full_path.relative_to(self.repo_path)),
+                "type": "directory" if full_path.is_dir() else "file",
+                "size": stat.st_size if full_path.is_file() else 0,
+                "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "accessed": datetime.fromtimestamp(stat.st_atime).isoformat(),
+                "permissions": oct(stat.st_mode)[-3:],  # Last 3 digits of octal mode
+                "git": git_info
+            }
+            
+            # Add additional information for files
+            if full_path.is_file():
+                # Guess MIME type
+                mime_type, encoding = mimetypes.guess_type(full_path)
+                file_info["mime_type"] = mime_type or "application/octet-stream"
+                if encoding:
+                    file_info["encoding"] = encoding
+                
+                # Check if it's a text file (simple heuristic)
+                try:
+                    with open(full_path, 'rb') as f:
+                        sample = f.read(1024)  # Read a sample of the file
+                        # Check if it's likely to be text
+                        is_text = True
+                        for byte in sample:
+                            if byte < 9 or (byte > 13 and byte < 32 and byte != 127):
+                                is_text = False
+                                break
+                        file_info["is_text"] = is_text
+                except:
+                    file_info["is_text"] = False
+            
+            return file_info
+        except Exception as e:
+            print(f"Error getting file info from git repository: {e}")
+            return {"error": str(e)}
+    
+    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
+        """
+        Calculate a hash of the file contents.
+        
+        Args:
+            path: Path to the file
+            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
+            
+        Returns:
+            Hex digest of the hash, or None if the file doesn't exist
+        """
+        try:
+            full_path = self._full_path(path)
+            if not full_path.exists() or not full_path.is_file():
+                return None
+            
+            # For git repositories, we can use git hash-object if the hash type is sha1
+            if hash_type == "sha1":
+                try:
+                    git_hash = subprocess.run(
+                        ["git", "hash-object", path],
+                        cwd=self.repo_path, check=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+                    return git_hash.stdout.decode().strip()
+                except subprocess.SubprocessError:
+                    # Fall back to manual calculation
+                    pass
+            
+            # Manual hash calculation for other hash types or as fallback
+            hash_func = None
+            if hash_type == "md5":
+                hash_func = hashlib.md5()
+            elif hash_type == "sha1":
+                hash_func = hashlib.sha1()
+            elif hash_type == "sha256":
+                hash_func = hashlib.sha256()
+            else:
+                raise ValueError(f"Unsupported hash type: {hash_type}")
+            
+            with open(full_path, 'rb') as f:
+                # Read in chunks to handle large files
+                for chunk in iter(lambda: f.read(4096), b''):
+                    hash_func.update(chunk)
+            
+            return hash_func.hexdigest()
+        except Exception as e:
+            print(f"Error calculating file hash in git repository: {e}")
+            return None
 
 
 # Note: The following two classes would need to be properly implemented with the 
@@ -564,6 +970,22 @@ class FileManagerTool:
             # Default for general files
             "general": "local"
         }
+        
+        # Initialize MIME type detection
+        mimetypes.init()
+        
+        # File tagging system
+        self.tags_file_path = os.path.join(self.base_paths["local"], ".file_tags.json")
+        
+        # Load existing tags if available
+        self.file_tags = {}
+        if os.path.exists(self.tags_file_path):
+            try:
+                with open(self.tags_file_path, 'r') as f:
+                    self.file_tags = json.load(f)
+            except json.JSONDecodeError:
+                # Initialize with empty dict if the file is corrupted
+                self.file_tags = {}
     
     def initialize_backend(self, backend_type: str, **kwargs) -> bool:
         """
@@ -909,6 +1331,627 @@ class FileManagerTool:
         except Exception as e:
             print(f"Error getting file history: {e}")
             return []
+            
+    def search_files(self, 
+                    pattern: str, 
+                    storage_type: Optional[str] = None,
+                    file_type: Optional[str] = None,
+                    path: str = "",
+                    recursive: bool = True) -> List[Dict[str, Any]]:
+        """
+        Search for files matching a pattern.
+        
+        Args:
+            pattern: Regular expression pattern to match against file names
+            storage_type: Specific storage to use (overrides file_type preference)
+            file_type: Type of file (used to determine storage if storage_type not specified)
+            path: Base directory to search in
+            recursive: Whether to search recursively through subdirectories
+            
+        Returns:
+            List of matching file information dictionaries
+        """
+        # Determine which storage to use
+        storage = self._get_storage(storage_type, file_type)
+        if storage is None:
+            return []
+            
+        try:
+            return storage.search_files(path, pattern, recursive)
+        except Exception as e:
+            print(f"Error searching files: {e}")
+            return []
+            
+    def get_file_info(self,
+                     path: str,
+                     storage_type: Optional[str] = None,
+                     file_type: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get detailed information about a file.
+        
+        Args:
+            path: Path to the file
+            storage_type: Specific storage to use (overrides file_type preference)
+            file_type: Type of file (used to determine storage if storage_type not specified)
+            
+        Returns:
+            Dictionary with detailed file information
+        """
+        # Determine which storage to use
+        storage = self._get_storage(storage_type, file_type)
+        if storage is None:
+            return {"error": "No storage available"}
+            
+        try:
+            file_info = storage.get_file_info(path)
+            
+            # Add tags if available
+            storage_name = storage_type if storage_type else (
+                self.storage_preferences.get(file_type) if file_type else "local"
+            )
+            file_key = f"{storage_name}:{path}"
+            if file_key in self.file_tags:
+                file_info["tags"] = self.file_tags[file_key]
+                
+            return file_info
+        except Exception as e:
+            print(f"Error getting file info: {e}")
+            return {"error": str(e)}
+            
+    def get_file_hash(self,
+                     path: str,
+                     hash_type: str = "sha256",
+                     storage_type: Optional[str] = None,
+                     file_type: Optional[str] = None) -> Optional[str]:
+        """
+        Calculate a hash of the file contents.
+        
+        Args:
+            path: Path to the file
+            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
+            storage_type: Specific storage to use (overrides file_type preference)
+            file_type: Type of file (used to determine storage if storage_type not specified)
+            
+        Returns:
+            Hex digest of the hash, or None if the file doesn't exist
+        """
+        # Determine which storage to use
+        storage = self._get_storage(storage_type, file_type)
+        if storage is None:
+            return None
+            
+        try:
+            return storage.get_file_hash(path, hash_type)
+        except Exception as e:
+            print(f"Error calculating file hash: {e}")
+            return None
+            
+    # File tagging system
+    def add_tags(self,
+                path: str,
+                tags: List[str],
+                storage_type: Optional[str] = None,
+                file_type: Optional[str] = None) -> bool:
+        """
+        Add tags to a file.
+        
+        Args:
+            path: Path to the file
+            tags: List of tags to add
+            storage_type: Specific storage to use (overrides file_type preference)
+            file_type: Type of file (used to determine storage if storage_type not specified)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Check if the file exists
+        if not self.file_exists(path, storage_type, file_type):
+            return False
+            
+        # Determine the storage type
+        storage_name = storage_type if storage_type else (
+            self.storage_preferences.get(file_type) if file_type else "local"
+        )
+        
+        # Create a unique key for the file
+        file_key = f"{storage_name}:{path}"
+        
+        # Add or update tags
+        if file_key not in self.file_tags:
+            self.file_tags[file_key] = []
+            
+        # Add new tags without duplicates
+        self.file_tags[file_key] = list(set(self.file_tags[file_key] + tags))
+        
+        # Save the tags file
+        return self._save_tags()
+    
+    def remove_tags(self,
+                   path: str,
+                   tags: List[str],
+                   storage_type: Optional[str] = None,
+                   file_type: Optional[str] = None) -> bool:
+        """
+        Remove tags from a file.
+        
+        Args:
+            path: Path to the file
+            tags: List of tags to remove
+            storage_type: Specific storage to use (overrides file_type preference)
+            file_type: Type of file (used to determine storage if storage_type not specified)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Determine the storage type
+        storage_name = storage_type if storage_type else (
+            self.storage_preferences.get(file_type) if file_type else "local"
+        )
+        
+        # Create a unique key for the file
+        file_key = f"{storage_name}:{path}"
+        
+        # Remove tags if they exist
+        if file_key in self.file_tags:
+            self.file_tags[file_key] = [tag for tag in self.file_tags[file_key] if tag not in tags]
+            
+            # Save the tags file
+            return self._save_tags()
+            
+        return True  # Nothing to remove
+    
+    def get_tags(self,
+                path: str,
+                storage_type: Optional[str] = None,
+                file_type: Optional[str] = None) -> List[str]:
+        """
+        Get tags for a file.
+        
+        Args:
+            path: Path to the file
+            storage_type: Specific storage to use (overrides file_type preference)
+            file_type: Type of file (used to determine storage if storage_type not specified)
+            
+        Returns:
+            List of tags
+        """
+        # Determine the storage type
+        storage_name = storage_type if storage_type else (
+            self.storage_preferences.get(file_type) if file_type else "local"
+        )
+        
+        # Create a unique key for the file
+        file_key = f"{storage_name}:{path}"
+        
+        # Return tags or empty list
+        return self.file_tags.get(file_key, [])
+    
+    def search_by_tags(self, tags: List[str], match_all: bool = False) -> List[Dict[str, Any]]:
+        """
+        Search for files with specific tags.
+        
+        Args:
+            tags: List of tags to search for
+            match_all: If True, files must have all specified tags; if False, files can have any of the specified tags
+            
+        Returns:
+            List of file information dictionaries
+        """
+        results = []
+        
+        for file_key, file_tags in self.file_tags.items():
+            match = False
+            
+            if match_all:
+                # All specified tags must be present
+                match = all(tag in file_tags for tag in tags)
+            else:
+                # Any of the specified tags can be present
+                match = any(tag in file_tags for tag in tags)
+                
+            if match:
+                # Parse the file key to get storage and path
+                storage_name, path = file_key.split(":", 1)
+                
+                # Get the storage backend
+                storage = self.storage_backends.get(storage_name)
+                if storage and storage.file_exists(path):
+                    try:
+                        # Get file info
+                        file_info = storage.get_file_info(path)
+                        file_info["tags"] = file_tags
+                        file_info["storage"] = storage_name
+                        results.append(file_info)
+                    except:
+                        # Skip files that can't be accessed
+                        pass
+                        
+        return results
+    
+    def _save_tags(self) -> bool:
+        """Save file tags to the tags file."""
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.tags_file_path), exist_ok=True)
+            
+            # Write tags to file
+            with open(self.tags_file_path, 'w') as f:
+                json.dump(self.file_tags, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving tags: {e}")
+            return False
+            
+    # File compression and archiving
+    def compress_file(self,
+                     source_path: str,
+                     target_path: Optional[str] = None,
+                     compression_type: str = "zip",
+                     source_storage_type: Optional[str] = None,
+                     source_file_type: Optional[str] = None,
+                     target_storage_type: Optional[str] = None,
+                     target_file_type: Optional[str] = None) -> Optional[str]:
+        """
+        Compress a file or directory using the specified compression method.
+        
+        Args:
+            source_path: Path to the file or directory to compress
+            target_path: Output path for the compressed file (if None, derived from source path)
+            compression_type: Type of compression to use ('zip', 'tar', 'gzip', 'tar.gz')
+            source_storage_type: Storage type for the source file
+            source_file_type: File type for the source file
+            target_storage_type: Storage type for the target file
+            target_file_type: File type for the target file
+            
+        Returns:
+            Path to the compressed file if successful, None otherwise
+        """
+        # Determine source storage
+        source_storage = self._get_storage(source_storage_type, source_file_type)
+        if source_storage is None:
+            return None
+            
+        # Determine target storage (default to same as source)
+        target_storage_type = target_storage_type or source_storage_type
+        target_file_type = target_file_type or "temp"  # Default compressed files to temp
+        target_storage = self._get_storage(target_storage_type, target_file_type)
+        if target_storage is None:
+            return None
+            
+        # Check if source exists
+        if not source_storage.file_exists(source_path):
+            return None
+            
+        # Determine target path if not specified
+        if target_path is None:
+            # Add appropriate extension
+            if compression_type == "zip":
+                target_path = f"{source_path}.zip"
+            elif compression_type == "tar":
+                target_path = f"{source_path}.tar"
+            elif compression_type == "gzip":
+                target_path = f"{source_path}.gz"
+            elif compression_type == "tar.gz":
+                target_path = f"{source_path}.tar.gz"
+            else:
+                return None  # Unsupported compression type
+                
+        try:
+            # Read the source file or directory
+            source_content = source_storage.read_file(source_path)
+            
+            compressed_content = None
+            
+            # Compress using the specified method
+            if compression_type == "zip":
+                # Create a zip file in memory
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    zip_file.writestr(os.path.basename(source_path), source_content)
+                buffer.seek(0)
+                compressed_content = buffer.read()
+                
+            elif compression_type == "tar":
+                # Create a tar file in memory
+                buffer = io.BytesIO()
+                with tarfile.open(fileobj=buffer, mode='w') as tar_file:
+                    info = tarfile.TarInfo(name=os.path.basename(source_path))
+                    info.size = len(source_content)
+                    tar_file.addfile(info, io.BytesIO(source_content))
+                buffer.seek(0)
+                compressed_content = buffer.read()
+                
+            elif compression_type == "gzip":
+                # Create a gzip file in memory
+                buffer = io.BytesIO()
+                with gzip.GzipFile(fileobj=buffer, mode='wb') as gz_file:
+                    gz_file.write(source_content)
+                buffer.seek(0)
+                compressed_content = buffer.read()
+                
+            elif compression_type == "tar.gz":
+                # Create a tar.gz file in memory
+                buffer = io.BytesIO()
+                with tarfile.open(fileobj=buffer, mode='w:gz') as tar_gz_file:
+                    info = tarfile.TarInfo(name=os.path.basename(source_path))
+                    info.size = len(source_content)
+                    tar_gz_file.addfile(info, io.BytesIO(source_content))
+                buffer.seek(0)
+                compressed_content = buffer.read()
+                
+            else:
+                # Unsupported compression type
+                return None
+            
+            # Write the compressed content to the target
+            if compressed_content:
+                target_storage.write_file(target_path, compressed_content)
+                return target_path
+                
+            return None
+        except Exception as e:
+            print(f"Error compressing file: {e}")
+            return None
+    
+    def decompress_file(self,
+                       source_path: str,
+                       target_dir: Optional[str] = None,
+                       source_storage_type: Optional[str] = None,
+                       source_file_type: Optional[str] = None,
+                       target_storage_type: Optional[str] = None,
+                       target_file_type: Optional[str] = None) -> List[str]:
+        """
+        Decompress a file using the specified compression method.
+        
+        Args:
+            source_path: Path to the compressed file
+            target_dir: Directory to extract files to (if None, derived from source path)
+            source_storage_type: Storage type for the source file
+            source_file_type: File type for the source file
+            target_storage_type: Storage type for the target directory
+            target_file_type: File type for the extracted files
+            
+        Returns:
+            List of extracted file paths if successful, empty list otherwise
+        """
+        # Determine source storage
+        source_storage = self._get_storage(source_storage_type, source_file_type)
+        if source_storage is None:
+            return []
+            
+        # Determine target storage (default to same as source)
+        target_storage_type = target_storage_type or source_storage_type
+        target_file_type = target_file_type or "temp"  # Default extracted files to temp
+        target_storage = self._get_storage(target_storage_type, target_file_type)
+        if target_storage is None:
+            return []
+            
+        # Check if source exists
+        if not source_storage.file_exists(source_path):
+            return []
+            
+        # Determine target directory if not specified
+        if target_dir is None:
+            # Use source filename without extension as target directory
+            base_name = os.path.basename(source_path)
+            target_dir = os.path.splitext(base_name)[0]
+            
+            # Handle double extensions like .tar.gz
+            if target_dir.endswith('.tar'):
+                target_dir = os.path.splitext(target_dir)[0]
+                
+        # Create target directory
+        target_storage.create_directory(target_dir)
+        
+        try:
+            # Read the compressed file
+            source_content = source_storage.read_file(source_path)
+            
+            extracted_files = []
+            
+            # Determine compression type from file extension
+            ext = os.path.splitext(source_path)[1].lower()
+            if ext == '.zip':
+                # Extract zip file
+                buffer = io.BytesIO(source_content)
+                with zipfile.ZipFile(buffer, 'r') as zip_file:
+                    for file_info in zip_file.infolist():
+                        if file_info.filename.endswith('/'):  # Directory
+                            target_storage.create_directory(os.path.join(target_dir, file_info.filename))
+                        else:  # File
+                            file_content = zip_file.read(file_info.filename)
+                            target_path = os.path.join(target_dir, file_info.filename)
+                            target_storage.write_file(target_path, file_content)
+                            extracted_files.append(target_path)
+                            
+            elif ext == '.tar':
+                # Extract tar file
+                buffer = io.BytesIO(source_content)
+                with tarfile.open(fileobj=buffer, mode='r') as tar_file:
+                    for member in tar_file.getmembers():
+                        if member.isdir():  # Directory
+                            target_storage.create_directory(os.path.join(target_dir, member.name))
+                        else:  # File
+                            file_content = tar_file.extractfile(member).read()
+                            target_path = os.path.join(target_dir, member.name)
+                            target_storage.write_file(target_path, file_content)
+                            extracted_files.append(target_path)
+                            
+            elif ext == '.gz':
+                # Extract gzip file
+                # Gzip only compresses single files
+                buffer = io.BytesIO(source_content)
+                with gzip.GzipFile(fileobj=buffer, mode='rb') as gz_file:
+                    file_content = gz_file.read()
+                    # Remove .gz extension for target path
+                    base_name = os.path.basename(source_path)
+                    target_filename = os.path.splitext(base_name)[0]
+                    target_path = os.path.join(target_dir, target_filename)
+                    target_storage.write_file(target_path, file_content)
+                    extracted_files.append(target_path)
+            
+            elif source_path.endswith('.tar.gz'):
+                # Extract tar.gz file
+                buffer = io.BytesIO(source_content)
+                with tarfile.open(fileobj=buffer, mode='r:gz') as tar_gz_file:
+                    for member in tar_gz_file.getmembers():
+                        if member.isdir():  # Directory
+                            target_storage.create_directory(os.path.join(target_dir, member.name))
+                        else:  # File
+                            file_content = tar_gz_file.extractfile(member).read()
+                            target_path = os.path.join(target_dir, member.name)
+                            target_storage.write_file(target_path, file_content)
+                            extracted_files.append(target_path)
+            
+            return extracted_files
+        except Exception as e:
+            print(f"Error decompressing file: {e}")
+            return []
+    
+    def sync_file(self,
+                 source_path: str,
+                 target_path: Optional[str] = None,
+                 source_storage_type: Optional[str] = None,
+                 source_file_type: Optional[str] = None,
+                 target_storage_type: Optional[str] = None,
+                 target_file_type: Optional[str] = None,
+                 sync_tags: bool = True,
+                 metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Synchronize (copy) a file between different storage backends.
+        
+        Args:
+            source_path: Path to the source file
+            target_path: Path to write the file to (if None, uses the same as source_path)
+            source_storage_type: Storage type for the source file
+            source_file_type: File type for the source file
+            target_storage_type: Storage type for the target file
+            target_file_type: File type for the target file
+            sync_tags: Whether to copy tags from source to target
+            metadata: Optional metadata for the target backend
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if target_path is None:
+            target_path = source_path
+            
+        # Source and target must be different
+        if source_storage_type == target_storage_type and source_path == target_path:
+            return False
+            
+        # Determine source storage
+        source_storage = self._get_storage(source_storage_type, source_file_type)
+        if source_storage is None:
+            return False
+            
+        # Determine target storage
+        target_storage = self._get_storage(target_storage_type, target_file_type)
+        if target_storage is None:
+            return False
+            
+        # Check if source exists
+        if not source_storage.file_exists(source_path):
+            return False
+            
+        try:
+            # Read the source file
+            source_content = source_storage.read_file(source_path)
+            
+            # Write to the target
+            if isinstance(target_storage, GitStorageBackend) and metadata and "commit_message" in metadata:
+                target_storage.write_file(target_path, source_content, metadata["commit_message"])
+            else:
+                target_storage.write_file(target_path, source_content)
+                
+            # Sync tags if requested
+            if sync_tags:
+                source_storage_name = source_storage_type if source_storage_type else (
+                    self.storage_preferences.get(source_file_type) if source_file_type else "local"
+                )
+                target_storage_name = target_storage_type if target_storage_type else (
+                    self.storage_preferences.get(target_file_type) if target_file_type else "local"
+                )
+                
+                # Create file keys
+                source_key = f"{source_storage_name}:{source_path}"
+                target_key = f"{target_storage_name}:{target_path}"
+                
+                # Copy tags if source has any
+                if source_key in self.file_tags:
+                    self.file_tags[target_key] = self.file_tags[source_key].copy()
+                    self._save_tags()
+                    
+            return True
+        except Exception as e:
+            print(f"Error synchronizing file: {e}")
+            return False
+    
+    def detect_file_type(self, path: str, storage_type: Optional[str] = None) -> str:
+        """
+        Detect the type of a file based on its extension and content.
+        
+        Args:
+            path: Path to the file
+            storage_type: Storage type where the file is located
+            
+        Returns:
+            Detected file type (code, document, image, etc.)
+        """
+        # Get storage backend
+        storage = self._get_storage(storage_type, None)
+        if storage is None:
+            return "general"
+            
+        try:
+            # Check if file exists
+            if not storage.file_exists(path):
+                return "general"
+                
+            # Get file info
+            file_info = storage.get_file_info(path)
+            
+            # Get extension
+            filename = file_info.get("name", "")
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            
+            # Determine file type based on extension and MIME type
+            mime_type = file_info.get("mime_type", "")
+            
+            # Code files
+            if ext in ['.py', '.js', '.ts', '.java', '.c', '.cpp', '.h', '.cs', '.go', '.rb', '.php', '.html', '.css', '.sql']:
+                return "code"
+                
+            # Document files
+            if ext in ['.md', '.txt', '.doc', '.docx', '.pdf', '.odt', '.rtf']:
+                return "document"
+                
+            # Knowledge files
+            if ext in ['.json', '.yaml', '.yml', '.xml', '.csv', '.xlsx', '.xls']:
+                return "knowledge"
+                
+            # Image files
+            if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.svg', '.webp'] or mime_type.startswith('image/'):
+                return "image"
+                
+            # Video files
+            if ext in ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm'] or mime_type.startswith('video/'):
+                return "video"
+                
+            # Audio files
+            if ext in ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'] or mime_type.startswith('audio/'):
+                return "audio"
+                
+            # Compressed files
+            if ext in ['.zip', '.tar', '.gz', '.rar', '.7z', '.tar.gz']:
+                return "compressed"
+                
+            # Default to general
+            return "general"
+        except Exception as e:
+            print(f"Error detecting file type: {e}")
+            return "general"
     
     def _get_storage(self, storage_type: Optional[str], file_type: Optional[str]) -> Optional[StorageBackend]:
         """
