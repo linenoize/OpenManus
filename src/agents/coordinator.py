@@ -30,10 +30,12 @@ class TaskCoordinator:
         from src.tools.web_browser import WebBrowserTool
         from src.tools.code_executor import CodeExecutorTool
         from src.tools.data_retriever import DataRetrieverTool
+        from src.tools.memory_tool import MemoryTool
         return {
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
             'data_retriever': DataRetrieverTool(),
+            'memory': MemoryTool(),
             'llm_service': self.llm_service
         }
     
@@ -60,6 +62,11 @@ class TaskCoordinator:
             self.llm_service.set_tool_preference(
                 "web_browser", "local", 
                 "Local LLM is sufficient for basic web parsing and reduces costs"
+            )
+            
+            self.llm_service.set_tool_preference(
+                "memory", "local",
+                "Local LLM is ideal for memory operations to ensure privacy and reduce costs"
             )
 
     def execute_task(self, task_description):
@@ -122,12 +129,26 @@ class PlannerAgent:
                 Generate a step-by-step execution plan for the following task:
                 "{task_description}"
                 
-                The plan should use available tools: web_browser, code_executor, data_retriever.
+                The plan should use available tools:
+                1. web_browser - Browse websites and extract information
+                2. code_executor - Execute code snippets in various languages
+                3. data_retriever - Retrieve data from various sources
+                4. memory - Store and retrieve information across sessions
+                
+                Memory tool supports the following operations:
+                - store: Store information (content, metadata, namespace)
+                - get: Get specific memory by ID
+                - get_all: Get all memories in a namespace
+                - search: Search memories by query
+                - update: Update existing memory
+                - delete: Delete a memory
+                - list_namespaces: List all available namespaces
                 
                 Return a JSON object with the following structure:
                 {{
                     "steps": [
                         {{"agent": "tool", "action": "use_tool", "tool_name": "web_browser", "tool_args": {{"url": "example.com"}}}},
+                        {{"agent": "tool", "action": "use_tool", "tool_name": "memory", "tool_args": {{"operation": "store", "content": "Important information", "namespace": "research"}}}},
                         ...
                     ]
                 }}
@@ -157,9 +178,12 @@ class PlannerAgent:
                 print(f"Error generating plan with LLM: {e}")
         
         # Fallback plan if LLM is not available or fails
+        # Include memory operations to demonstrate basic memory functionality
         return {
             "steps": [
-                {"agent": "tool", "action": "use_tool", "tool_name": "web_browser", "tool_args": {"url": "https://www.example.com"}}
+                {"agent": "tool", "action": "use_tool", "tool_name": "memory", "tool_args": {"operation": "store", "content": f"Task received: {task_description}", "namespace": "tasks"}},
+                {"agent": "tool", "action": "use_tool", "tool_name": "web_browser", "tool_args": {"url": "https://www.example.com"}},
+                {"agent": "tool", "action": "use_tool", "tool_name": "memory", "tool_args": {"operation": "search", "query": "Task", "namespace": "tasks"}}
             ]
         }
 
@@ -223,6 +247,43 @@ class ToolAgent:
                 return tool.execute_code(**tool_args)
             elif tool_name == 'data_retriever':
                 return tool.retrieve_data(**tool_args)
+            elif tool_name == 'memory':
+                # Handle memory tool operations
+                operation = tool_args.get('operation')
+                if not operation:
+                    return "Error: Memory tool requires an 'operation' argument"
+                
+                # Remove operation from args since it's not a parameter of the methods
+                tool_args_copy = tool_args.copy()
+                del tool_args_copy['operation']
+                
+                # Call the appropriate method based on operation
+                if operation == 'store':
+                    result = tool.store(**tool_args_copy)
+                    return f"Memory stored with ID: {result['id']}"
+                elif operation == 'get':
+                    result = tool.get(**tool_args_copy)
+                    return result if result else "Memory not found"
+                elif operation == 'get_all':
+                    result = tool.get_all(**tool_args_copy)
+                    return f"Retrieved {len(result)} memories"
+                elif operation == 'search':
+                    result = tool.search(**tool_args_copy)
+                    return f"Found {len(result)} matching memories: {result}"
+                elif operation == 'update':
+                    result = tool.update(**tool_args_copy)
+                    return "Memory updated successfully" if result else "Memory not found"
+                elif operation == 'delete':
+                    result = tool.delete(**tool_args_copy)
+                    return "Memory deleted successfully" if result else "Memory not found"
+                elif operation == 'list_namespaces':
+                    result = tool.list_namespaces()
+                    return f"Available namespaces: {result}"
+                elif operation == 'clear_namespace':
+                    result = tool.clear_namespace(**tool_args_copy)
+                    return "Namespace cleared successfully" if result else "Namespace not found"
+                else:
+                    return f"Unknown memory operation: {operation}"
             elif tool_name == 'llm_service':
                 # Direct access to LLM service as a tool
                 if 'prompt' in tool_args:

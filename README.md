@@ -21,6 +21,7 @@ This repository provides a starting point for developers and researchers to buil
 - **Dockerized Environment**: Easy setup and deployment with containerization.
 - **Task Execution**: Supports tasks like travel planning, data analysis, and content generation.
 - **Tool Integration**: Web browsing, code execution, and data retrieval capabilities.
+- **Memory System**: Persistent memory across sessions with namespaces, search, and metadata.
 - **Modular Design**: Easily extendable with new agents, tools, or features.
 - **Multiple LLM Support**: Integration with OpenAI (GPT-4o), Anthropic (Claude), and local models.
 - **LLM Preference System**: Customize which LLM to use for specific agents and tools.
@@ -76,6 +77,12 @@ python src/client.py llm recommendations
 
 # Set Claude as the preferred provider for the planner agent
 python src/client.py llm preference --type agent --name planner --provider claude --reason "Better at creative planning"
+
+# Memory operations
+python src/client.py memory list  # List all memory namespaces
+python src/client.py memory store --namespace research --content "Tesla announced a new product" --metadata '{"source": "news", "date": "2024-03-15"}'
+python src/client.py memory get-all --namespace research  # Get all memories in the research namespace
+python src/client.py memory search --namespace research --query "Tesla"  # Search for memories
 ```
 
 ### Project Structure
@@ -186,6 +193,49 @@ Response: {
 }
 ```
 
+**GET /memory**: List all memory namespaces.
+```json
+Response: {
+  "namespaces": ["general", "research", "user_preferences"]
+}
+```
+
+**GET /memory/{namespace}**: Get all memories in a namespace.
+```json
+Response: {
+  "memories": [
+    {
+      "id": "2024-03-15T14:30:45.123456",
+      "content": "Tesla announced a new product",
+      "timestamp": "2024-03-15T14:30:45.123456",
+      "metadata": {
+        "source": "news",
+        "date": "2024-03-15"
+      }
+    },
+    ...
+  ]
+}
+```
+
+**POST /memory/{namespace}**: Store a new memory.
+```json
+Body: {
+  "content": "Important information to remember",
+  "metadata": {"source": "user", "importance": "high"},
+  "memory_id": "custom-id-123" // optional
+}
+Response: {
+  "status": "success",
+  "memory": {
+    "id": "custom-id-123",
+    "content": "Important information to remember",
+    "timestamp": "2024-03-15T14:30:45.123456",
+    "metadata": {"source": "user", "importance": "high"}
+  }
+}
+```
+
 **GET /llm/recommendations**: Get current LLM recommendations for agents and tools.
 ```json
 Response: {
@@ -225,11 +275,16 @@ We welcome contributions! To get started:
 Please read `CONTRIBUTING.md` for guidelines.
 
 ### Roadmap
-- Implement core multi-agent coordination.
-- Add support for GAIA benchmark tasks.
-- Integrate advanced NLP models (e.g., LLaMA, Grok).
-- Enhance toolset with real-time web scraping and visualization.
-- Release v1.0 with stable task execution.
+- ✅ Implement core multi-agent coordination
+- ✅ Add persistent memory system for context retention
+- Add support for GAIA benchmark tasks
+- Integrate advanced NLP models (e.g., LLaMA, Grok)
+- Enhance toolset with:
+  - Real-time web scraping and visualization
+  - Vector embedding memory for semantic search
+  - File management system
+  - Document processing capabilities
+- Release v1.0 with stable task execution
 
 ### Inspiration
 OpenManus is inspired by:
