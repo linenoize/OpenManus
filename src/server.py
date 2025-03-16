@@ -368,6 +368,207 @@ def delete_vector_document(collection_name, doc_id):
         logger.error(f"Error deleting vector document: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+# File Manager endpoints
+@app.route('/file-manager/preferences', methods=['GET'])
+def get_storage_preferences():
+    """Get current file storage preferences"""
+    try:
+        preferences = coordinator.tools['file_manager'].get_storage_preferences()
+        return jsonify({'preferences': preferences})
+    except Exception as e:
+        logger.error(f"Error getting storage preferences: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/preferences', methods=['POST'])
+def set_storage_preference():
+    """Set storage preference for a file type"""
+    data = request.get_json()
+    file_type = data.get('file_type')
+    storage_type = data.get('storage_type')
+    
+    if not file_type or not storage_type:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    try:
+        result = coordinator.tools['file_manager'].set_storage_preference(file_type, storage_type)
+        if not result:
+            return jsonify({'error': 'Invalid storage type or backend not initialized'}), 400
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error setting storage preference: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/files', methods=['GET'])
+def list_files():
+    """List files in a directory"""
+    path = request.args.get('path', '')
+    storage_type = request.args.get('storage_type')
+    file_type = request.args.get('file_type')
+    
+    try:
+        files = coordinator.tools['file_manager'].list_files(path, storage_type, file_type)
+        return jsonify({'files': files})
+    except Exception as e:
+        logger.error(f"Error listing files: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/files', methods=['POST'])
+def write_file():
+    """Write a file"""
+    data = request.get_json()
+    path = data.get('path')
+    content = data.get('content')
+    storage_type = data.get('storage_type')
+    file_type = data.get('file_type')
+    encoding = data.get('encoding', 'utf-8')
+    metadata = data.get('metadata')
+    
+    if not path or content is None:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    try:
+        # Determine if we're dealing with text or binary
+        if isinstance(content, str):
+            result = coordinator.tools['file_manager'].write_text(
+                path, content, storage_type, file_type, encoding, metadata
+            )
+        else:
+            # For binary content (would need to be base64 encoded in a real API)
+            result = coordinator.tools['file_manager'].write_file(
+                path, content, storage_type, file_type, metadata
+            )
+            
+        if not result:
+            return jsonify({'error': 'Error writing file'}), 500
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error writing file: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/files/<path:file_path>', methods=['GET'])
+def read_file(file_path):
+    """Read a file"""
+    storage_type = request.args.get('storage_type')
+    file_type = request.args.get('file_type')
+    encoding = request.args.get('encoding', 'utf-8')
+    as_text = request.args.get('as_text', 'true').lower() == 'true'
+    
+    try:
+        if as_text:
+            content = coordinator.tools['file_manager'].read_text(
+                file_path, storage_type, file_type, encoding
+            )
+            if content is None:
+                return jsonify({'error': 'File not found or read error'}), 404
+            return jsonify({'content': content})
+        else:
+            # For binary content, we'd need to handle base64 encoding in a real API
+            content = coordinator.tools['file_manager'].read_file(
+                file_path, storage_type, file_type
+            )
+            if content is None:
+                return jsonify({'error': 'File not found or read error'}), 404
+            return jsonify({'content': 'Binary content', 'size': len(content)})
+    except Exception as e:
+        logger.error(f"Error reading file: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/files/<path:file_path>', methods=['DELETE'])
+def delete_file(file_path):
+    """Delete a file"""
+    storage_type = request.args.get('storage_type')
+    file_type = request.args.get('file_type')
+    metadata = request.get_json() if request.is_json else None
+    
+    try:
+        result = coordinator.tools['file_manager'].delete_file(
+            file_path, storage_type, file_type, metadata
+        )
+        if not result:
+            return jsonify({'error': 'File not found or delete error'}), 404
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/files/<path:file_path>/rename', methods=['POST'])
+def rename_file(file_path):
+    """Rename a file"""
+    data = request.get_json()
+    new_path = data.get('new_path')
+    storage_type = data.get('storage_type')
+    file_type = data.get('file_type')
+    metadata = data.get('metadata')
+    
+    if not new_path:
+        return jsonify({'error': 'Missing new_path parameter'}), 400
+    
+    try:
+        result = coordinator.tools['file_manager'].rename_file(
+            file_path, new_path, storage_type, file_type, metadata
+        )
+        if not result:
+            return jsonify({'error': 'File not found or rename error'}), 404
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error renaming file: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/directories', methods=['POST'])
+def create_directory():
+    """Create a directory"""
+    data = request.get_json()
+    path = data.get('path')
+    storage_type = data.get('storage_type')
+    file_type = data.get('file_type')
+    
+    if not path:
+        return jsonify({'error': 'Missing path parameter'}), 400
+    
+    try:
+        result = coordinator.tools['file_manager'].create_directory(
+            path, storage_type, file_type
+        )
+        if not result:
+            return jsonify({'error': 'Error creating directory'}), 500
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error creating directory: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/files/<path:file_path>/history', methods=['GET'])
+def get_file_history(file_path):
+    """Get file history (git only)"""
+    max_entries = request.args.get('max_entries', 10, type=int)
+    
+    try:
+        history = coordinator.tools['file_manager'].get_file_history(file_path, max_entries)
+        return jsonify({'history': history})
+    except Exception as e:
+        logger.error(f"Error getting file history: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/file-manager/backends', methods=['POST'])
+def initialize_backend():
+    """Initialize a storage backend"""
+    data = request.get_json()
+    backend_type = data.get('backend_type')
+    credentials_path = data.get('credentials_path')
+    
+    if not backend_type or not credentials_path:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    try:
+        result = coordinator.tools['file_manager'].initialize_backend(
+            backend_type, credentials_path=credentials_path
+        )
+        if not result:
+            return jsonify({'error': 'Error initializing backend'}), 500
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error initializing backend: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 if __name__ == '__main__':
     # Configure and initialize the LLM providers based on environment variables
     app.run(host='0.0.0.0', port=5000)
