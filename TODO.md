@@ -7,11 +7,6 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 - [x] Implement local storage backend
 - [x] Implement Git storage backend
 - [x] Implement Google Drive storage backend
-- [ ] Implement OneDrive storage backend
-  - Current implementation is a placeholder
-  - Need to add Microsoft Graph API integration
-  - Implement authentication flow (similar to Google Drive)
-  - Create proper error handling and path management
 
 ## Memory System
 
@@ -29,7 +24,6 @@ This file tracks planned improvements and unfinished features in the OpenManus p
   - [x] Create vector storage and retrieval mechanism
   - [x] Add similarity search functionality
   - [x] Integrate with memory system for enhanced recall
-  - [ ] Support multiple vector database backends beyond FAISS
 
 ## Integration and Testing
 
@@ -44,3 +38,12 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 - [ ] Create architecture diagrams
 - [ ] Add developer getting started guide
 - [ ] Document configuration options for all tools
+
+## Future Enhancements
+
+- [ ] Implement OneDrive storage backend
+  - Current implementation is a placeholder
+  - Need to add Microsoft Graph API integration
+  - Implement authentication flow (similar to Google Drive)
+  - Create proper error handling and path management
+- [ ] Support multiple vector database backends beyond FAISS
