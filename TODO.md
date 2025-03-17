@@ -50,10 +50,10 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 
 ## Documentation
 
-- [ ] Document all APIs with consistent format
-- [ ] Create architecture diagrams
-- [ ] Add developer getting started guide
-- [ ] Document configuration options for all tools
+- [x] Document all APIs with consistent format
+- [x] Create architecture diagrams
+- [x] Add developer getting started guide
+- [x] Document configuration options for all tools
 
 ## Future Enhancements
 
