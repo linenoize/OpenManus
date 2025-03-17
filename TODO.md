@@ -73,9 +73,45 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 
 ## Future Enhancements
 
-- [ ] Implement OneDrive storage backend (LOW PRIORITY)
-  - Current implementation is a placeholder
-  - Need to add Microsoft Graph API integration
-  - Implement authentication flow (similar to Google Drive)
-  - Create proper error handling and path management
-- [ ] Support multiple vector database backends beyond FAISS
+- [ ] Data Storage and Integration
+  - [ ] Implement OneDrive storage backend (LOW PRIORITY)
+    - Current implementation is a placeholder
+    - Need to add Microsoft Graph API integration
+    - Implement authentication flow (similar to Google Drive)
+    - Create proper error handling and path management
+  - [ ] Support multiple vector database backends beyond FAISS
+    - [ ] Add Pinecone integration
+    - [ ] Add Weaviate integration
+    - [ ] Add Milvus integration
+    - [ ] Create unified vector database interface
+
+- [ ] Additional Tools
+  - [x] Structured Data Tool
+    - [x] CSV parser and manipulation
+    - [x] JSON transformation and querying
+    - [x] SQL database integration
+    - [x] Data visualization capabilities
+  - [x] Metadata Extractor Tool
+    - [x] Extract metadata from various file types
+    - [x] Generate summaries from content
+    - [x] Create searchable indices
+  - [ ] Task Decomposition Tool
+    - [ ] Break complex tasks into smaller subtasks
+    - [ ] Track task dependencies and status
+    - [ ] Implement priority-based execution
+  - [ ] Social Media API Tool
+    - [ ] Reddit integration for data collection
+    - [ ] Telegram, Discord, and Slack for interactions
+    - [ ] Implement rate limiting and error handling
+  - [ ] Document Processing Tool
+    - [ ] PDF parsing and analysis
+    - [ ] Word document processing
+    - [ ] Extract structured data from documents
+  - [ ] Image and Video Analysis Tool
+    - [ ] Extract text from images (OCR)
+    - [ ] Generate image descriptions
+    - [ ] Extract and transcribe audio from videos
+    - [ ] Scene detection and content analysis
+  - [ ] Text-to-Speech/Speech-to-Text Tool (LOW PRIORITY)
+    - [ ] Convert text responses to audio
+    - [ ] Process speech input into text commands
