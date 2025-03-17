@@ -18,21 +18,31 @@ COPY components ./components
 # Build the Next.js application
 RUN npm run build
 
-# Stage 2: Python base image for final container
+# Stage 2: Python dependencies
+FROM python:3.9-slim AS python-deps
+
+WORKDIR /app
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Stage 3: Final runtime image
 FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install only necessary production dependencies
 RUN apt-get update && apt-get -y install --no-install-recommends \
-    tree \
     nginx \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python requirements and install
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy Python dependencies from the python-deps stage
+COPY --from=python-deps /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=python-deps /usr/local/bin /usr/local/bin
 
 # Copy the built Next.js app from the frontend builder
 COPY --from=frontend-builder /app/.next ./.next
@@ -40,7 +50,7 @@ COPY --from=frontend-builder /app/public ./public
 COPY --from=frontend-builder /app/node_modules ./node_modules
 COPY --from=frontend-builder /app/package.json ./package.json
 
-# Copy the Python backend code and nginx config
+# Copy only necessary files
 COPY src ./src
 COPY docker/unified-all/start.sh ./start.sh
 COPY docker/unified-all/nginx.conf /etc/nginx/nginx.conf
@@ -54,6 +64,11 @@ RUN chmod +x ./start.sh
 
 # Expose only port 80 for the nginx proxy
 EXPOSE 80
+
+# Set default non-root user for security
+RUN groupadd -r openmanus && useradd -r -g openmanus openmanus
+RUN chown -R openmanus:openmanus /app /var/log/nginx /var/lib/nginx
+USER openmanus
 
 # Start all services
 CMD ["/app/start.sh"]

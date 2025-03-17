@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  unified-dev:
+    build: 
+      context: .
+      dockerfile: docker/unified-all/dev/Dockerfile
+    ports:
+      - "80:80"  # Single exposed port through nginx
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - FLASK_APP=src/server.py
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - NODE_ENV=development
+    volumes:
+      # Mount source directories for live development
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./public:/app/public
+      - ./pages:/app/pages
+      - ./components:/app/components
+      - ./styles:/app/styles
+      - ./.env:/app/.env
+    # Allow for interactive terminal
+    stdin_open: true
+    tty: true

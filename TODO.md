@@ -27,7 +27,7 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 
 ## Docker and Deployment
 
-- [ ] Implement unified Docker container
+- [x] Implement unified Docker container
   - [x] Create multi-stage build Dockerfile
   - [x] Create startup script for all services
   - [x] Create unified docker-compose configuration
@@ -35,10 +35,11 @@ This file tracks planned improvements and unfinished features in the OpenManus p
   - [x] Add error pages and proper error handling
   - [x] Implement service startup checks and graceful shutdown
   - [x] Add health check endpoint
+  - [x] Add development mode with live code reloading
+  - [x] Optimize container size with multi-stage builds
+  - [x] Enhance security with non-root user
+  - [x] Document Docker deployment process
   - [ ] Test unified container with all services
-  - [ ] Add development mode with live code reloading
-  - [ ] Document Docker deployment process
-  - [ ] Optimize container size and build time
 
 ## Integration and Testing
 
