@@ -4,7 +4,7 @@ import shutil
 import unittest
 from unittest.mock import patch, MagicMock
 import numpy as np
-import faiss
+import importlib
 from src.tools.vector_db_tool import VectorDBTool
 
 class TestVectorDBTool(unittest.TestCase):
@@ -28,7 +28,7 @@ class TestVectorDBTool(unittest.TestCase):
         self.mock_model.encode.side_effect = mock_encode
         
         # Initialize the VectorDBTool with the mock
-        self.vector_db = VectorDBTool(base_path=self.test_dir)
+        self.vector_db = VectorDBTool(base_path=self.test_dir, backend="faiss")
         
     def tearDown(self):
         # Clean up the temporary directory
@@ -173,6 +173,107 @@ class TestVectorDBTool(unittest.TestCase):
             doc = self.vector_db.get_by_id("batch_test", doc_id)
             self.assertEqual(doc["text"], texts[i])
             self.assertEqual(doc["metadata"]["source"], metadatas[i]["source"])
+
+    def test_available_backends(self):
+        # Get available backends
+        backends = self.vector_db.available_backends()
+        
+        # Check that FAISS is available
+        self.assertIn("faiss", backends)
+        
+    def test_current_backend(self):
+        # Check current backend
+        backend = self.vector_db.current_backend()
+        
+        # Should be FAISS as specified in setUp
+        self.assertEqual(backend, "faiss")
+
+
+class TestMultipleBackends(unittest.TestCase):
+    """Tests for different vector database backends."""
+    
+    def setUp(self):
+        # Create a temporary directory for testing
+        self.test_dir = tempfile.mkdtemp()
+        
+        # Create a mock for SentenceTransformer
+        self.model_patcher = patch('src.tools.vector_db_tool.SentenceTransformer')
+        self.mock_model_class = self.model_patcher.start()
+        
+        # Setup the mock model
+        self.mock_model = MagicMock()
+        self.mock_model_class.return_value = self.mock_model
+        
+        # Configure the mock to return fake embeddings
+        def mock_encode(texts):
+            return np.random.rand(len(texts), 384).astype(np.float32)
+        
+        self.mock_model.encode.side_effect = mock_encode
+        
+    def tearDown(self):
+        # Clean up the temporary directory
+        shutil.rmtree(self.test_dir)
+        # Stop the patcher
+        self.model_patcher.stop()
+    
+    def test_faiss_backend(self):
+        """Test FAISS backend functionality."""
+        # Create VectorDBTool with FAISS backend
+        vector_db = VectorDBTool(base_path=f"{self.test_dir}/faiss", backend="faiss")
+        
+        # Test basic operations
+        vector_db.create_collection("test_collection")
+        
+        # Add document
+        doc_id = vector_db.add_text(
+            collection_name="test_collection",
+            text="This is a test document for FAISS backend",
+            metadata={"backend": "faiss"}
+        )
+        
+        # Search
+        results = vector_db.search(
+            collection_name="test_collection",
+            query="test document"
+        )
+        
+        # Verify results
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["metadata"]["backend"], "faiss")
+    
+    def test_chroma_backend(self):
+        """Test ChromaDB backend if available."""
+        # Check if ChromaDB is available
+        chromadb_spec = importlib.util.find_spec("chromadb")
+        if chromadb_spec is None:
+            self.skipTest("ChromaDB not installed")
+            
+        try:
+            # Create VectorDBTool with ChromaDB backend
+            vector_db = VectorDBTool(base_path=f"{self.test_dir}/chroma", backend="chroma")
+            
+            # Test basic operations
+            vector_db.create_collection("test_collection")
+            
+            # Add document
+            doc_id = vector_db.add_text(
+                collection_name="test_collection",
+                text="This is a test document for ChromaDB backend",
+                metadata={"backend": "chroma"}
+            )
+            
+            # Search
+            results = vector_db.search(
+                collection_name="test_collection",
+                query="test document"
+            )
+            
+            # Verify results
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["metadata"]["backend"], "chroma")
+        except (ImportError, ValueError) as e:
+            self.skipTest(f"ChromaDB backend test skipped: {e}")
+
 
 if __name__ == '__main__':
     unittest.main()

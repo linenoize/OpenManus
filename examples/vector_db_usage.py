@@ -2,30 +2,79 @@
 """
 Example script demonstrating the use of the vector database tool in OpenManus.
 This script shows how to use semantic search for more intelligent information retrieval.
+
+Features demonstrated:
+1. Creating and using the VectorDBTool
+2. Working with different vector database backends (FAISS, ChromaDB)
+3. Basic operations: creating collections, adding documents, searching, etc.
+4. Comparing results between different backends
 """
 
 import sys
 import os
 import json
+import logging
 from pprint import pprint
+from datetime import datetime
 
 # Add the parent directory to sys.path to import OpenManus modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 try:
     from src.tools.vector_db_tool import VectorDBTool
 except ImportError as e:
-    print(f"Error importing VectorDBTool: {e}")
-    print("Please install the required dependencies:")
-    print("  pip install faiss-cpu sentence-transformers")
+    logger.error(f"Error importing VectorDBTool: {e}")
+    logger.error("Please install the required dependencies:")
+    logger.error("  pip install faiss-cpu sentence-transformers")
     sys.exit(1)
+
+def run_with_backend(backend="faiss"):
+    """Run vector database operations with a specific backend."""
+    logger.info(f"Running vector database demo with {backend.upper()} backend")
+    
+    try:
+        # Initialize a vector database tool with the specified backend
+        vector_db = VectorDBTool(
+            model_name="all-MiniLM-L6-v2",
+            base_path=f"data/examples/vector_db/{backend}",
+            backend=backend
+        )
+    except (ImportError, ValueError) as e:
+        logger.error(f"Failed to initialize {backend} backend: {e}")
+        return None
+        
+    logger.info(f"Available backends: {vector_db.available_backends()}")
+    logger.info(f"Current backend: {vector_db.current_backend()}")
+    
+    return vector_db
 
 def main():
     print("OpenManus Vector Database Tool Demo")
     print("=" * 60)
     
-    # Initialize a vector database tool with a small model for speed
-    vector_db = VectorDBTool(model_name="all-MiniLM-L6-v2")
+    # Create data directory if it doesn't exist
+    os.makedirs("data/examples/vector_db", exist_ok=True)
+    
+    # Initialize with FAISS backend (default)
+    vector_db = run_with_backend("faiss")
+    if not vector_db:
+        logger.error("FAISS backend is required but not available")
+        sys.exit(1)
+        
+    # Try ChromaDB backend if available
+    try:
+        chroma_db = run_with_backend("chroma")
+        print("\nMultiple vector database backends available:")
+        print(f"  - FAISS: {vector_db is not None}")
+        print(f"  - ChromaDB: {chroma_db is not None}")
+        print("\nUsing default FAISS backend for the rest of the demo.\n")
+    except (ImportError, ValueError):
+        print("\nOnly FAISS backend is available. To try ChromaDB:")
+        print("  pip install chromadb\n")
     collection_name = "semantic_search_demo"
     
     # 1. Create a collection
