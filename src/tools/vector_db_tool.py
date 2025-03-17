@@ -312,6 +312,209 @@ class ChromaBackend(VectorDBBackend):
             logger.error(f"Error loading ChromaDB collection {collection_name}: {e}")
             return False
 
+class MilvusBackend(VectorDBBackend):
+    """Milvus vector database backend."""
+    
+    def __init__(self, dimension: int, base_path: Path, **kwargs):
+        """Initialize Milvus backend."""
+        self.dimension = dimension
+        self.base_path = base_path
+        self.uri = kwargs.get("uri", "http://localhost:19530")
+        self.client = None
+        self.collections = {}
+        
+        # Dynamically import Milvus
+        try:
+            from pymilvus import connections, utility, Collection, CollectionSchema, FieldSchema, DataType
+            self.pymilvus = {
+                "connections": connections,
+                "utility": utility,
+                "Collection": Collection,
+                "CollectionSchema": CollectionSchema,
+                "FieldSchema": FieldSchema,
+                "DataType": DataType
+            }
+            
+            # Connect to Milvus server
+            connections.connect(
+                alias="default", 
+                uri=self.uri,
+                timeout=kwargs.get("timeout", 10)
+            )
+            
+            # List existing collections
+            existing_collections = utility.list_collections()
+            for collection_name in existing_collections:
+                self.collections[collection_name] = Collection(collection_name)
+                
+        except ImportError:
+            logger.error("PyMilvus not found. Please install it with 'pip install pymilvus'")
+            raise
+    
+    def create_collection(self, collection_name: str) -> bool:
+        """Create a new Milvus collection."""
+        if collection_name in self.collections:
+            return False
+        
+        # Define collection schema
+        id_field = self.pymilvus["FieldSchema"](
+            name="id", 
+            dtype=self.pymilvus["DataType"].INT64, 
+            is_primary=True, 
+            auto_id=True
+        )
+        vector_field = self.pymilvus["FieldSchema"](
+            name="embedding", 
+            dtype=self.pymilvus["DataType"].FLOAT_VECTOR, 
+            dim=self.dimension
+        )
+        
+        schema = self.pymilvus["CollectionSchema"](
+            fields=[id_field, vector_field],
+            description=f"Vector collection for {collection_name}"
+        )
+        
+        # Create collection
+        collection = self.pymilvus["Collection"](
+            name=collection_name,
+            schema=schema
+        )
+        
+        # Create IVF_FLAT index for fast retrieval
+        index_params = {
+            "metric_type": "L2",
+            "index_type": "IVF_FLAT",
+            "params": {"nlist": 128}
+        }
+        collection.create_index("embedding", index_params)
+        collection.load()
+        
+        self.collections[collection_name] = collection
+        return True
+    
+    def delete_collection(self, collection_name: str) -> bool:
+        """Delete a Milvus collection."""
+        if collection_name not in self.collections:
+            return False
+        
+        # Drop the collection
+        self.pymilvus["utility"].drop_collection(collection_name)
+        
+        # Remove from local tracking
+        del self.collections[collection_name]
+        return True
+    
+    def list_collections(self) -> List[str]:
+        """List all Milvus collections."""
+        return list(self.collections.keys())
+    
+    def add_embeddings(self, collection_name: str, embeddings: np.ndarray) -> bool:
+        """Add embeddings to a Milvus collection."""
+        if collection_name not in self.collections:
+            return False
+        
+        collection = self.collections[collection_name]
+        
+        # Insert embeddings
+        entities = [
+            {"embedding": embedding.tolist()} for embedding in embeddings
+        ]
+        
+        collection.insert(entities)
+        return True
+    
+    def search_by_embedding(self, collection_name: str, embedding: np.ndarray, k: int = 5) -> Tuple[List[int], List[float]]:
+        """Search for similar embeddings in a Milvus collection."""
+        if collection_name not in self.collections:
+            return [], []
+        
+        collection = self.collections[collection_name]
+        
+        # Make sure the collection is loaded
+        if not collection.is_loaded:
+            collection.load()
+        
+        # Search for similar vectors
+        search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
+        results = collection.search(
+            data=[embedding.tolist()],
+            anns_field="embedding",
+            param=search_params,
+            limit=k,
+            output_fields=["id"]
+        )
+        
+        if not results or len(results) == 0:
+            return [], []
+        
+        # Extract IDs and distances
+        ids = [hit.id for hit in results[0]]
+        distances = [hit.distance for hit in results[0]]
+        
+        return ids, distances
+    
+    def clear_collection(self, collection_name: str) -> bool:
+        """Clear all embeddings from a Milvus collection."""
+        if collection_name not in self.collections:
+            return False
+        
+        # Delete all entities (not very efficient, but comprehensive)
+        collection = self.collections[collection_name]
+        
+        # In Milvus we recreate the collection to clear it effectively
+        try:
+            # Get schema
+            schema = collection.schema
+            # Drop collection
+            self.pymilvus["utility"].drop_collection(collection_name)
+            # Recreate with same schema
+            collection = self.pymilvus["Collection"](
+                name=collection_name,
+                schema=schema
+            )
+            # Re-create index
+            index_params = {
+                "metric_type": "L2",
+                "index_type": "IVF_FLAT",
+                "params": {"nlist": 128}
+            }
+            collection.create_index("embedding", index_params)
+            collection.load()
+            
+            # Update local reference
+            self.collections[collection_name] = collection
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing Milvus collection: {e}")
+            return False
+    
+    def get_collection_size(self, collection_name: str) -> int:
+        """Get the number of embeddings in a Milvus collection."""
+        if collection_name not in self.collections:
+            return 0
+        
+        collection = self.collections[collection_name]
+        return collection.num_entities
+    
+    def save_collection(self, collection_name: str, path: Path) -> bool:
+        """Save a Milvus collection to disk."""
+        # Milvus is a server-based database, so saving is managed by the server
+        return True
+    
+    def load_collection(self, collection_name: str, path: Path) -> bool:
+        """Load a Milvus collection from disk."""
+        # Milvus is a server-based database, so loading is managed by the server
+        if collection_name not in self.pymilvus["utility"].list_collections():
+            return False
+        
+        try:
+            self.collections[collection_name] = self.pymilvus["Collection"](collection_name)
+            return True
+        except Exception as e:
+            logger.error(f"Error loading Milvus collection: {e}")
+            return False
+
+
 class VectorDBTool:
     """
     Tool for vector database storage and retrieval.
@@ -321,7 +524,8 @@ class VectorDBTool:
     # Registry of available backends
     BACKENDS = {
         "faiss": FaissBackend,
-        "chroma": ChromaBackend
+        "chroma": ChromaBackend,
+        "milvus": MilvusBackend
     }
     
     def __init__(self, 

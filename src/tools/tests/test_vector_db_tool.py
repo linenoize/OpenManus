@@ -273,6 +273,42 @@ class TestMultipleBackends(unittest.TestCase):
             self.assertEqual(results[0]["metadata"]["backend"], "chroma")
         except (ImportError, ValueError) as e:
             self.skipTest(f"ChromaDB backend test skipped: {e}")
+            
+    def test_milvus_backend(self):
+        """Test Milvus backend if available."""
+        # Check if PyMilvus is available
+        milvus_spec = importlib.util.find_spec("pymilvus")
+        if milvus_spec is None:
+            self.skipTest("PyMilvus not installed")
+            
+        try:
+            # Create VectorDBTool with Milvus backend
+            # We'll use a mock server URI that won't connect for testing
+            # This is to avoid requiring an actual Milvus server
+            with patch('src.tools.vector_db_tool.MilvusBackend') as mock_milvus:
+                # Configure the mock
+                mock_instance = mock_milvus.return_value
+                mock_instance.create_collection.return_value = True
+                mock_instance.add_embeddings.return_value = True
+                mock_instance.list_collections.return_value = ["test_collection"]
+                mock_instance.search_by_embedding.return_value = ([0], [0.1])
+                mock_instance.get_collection_size.return_value = 1
+                
+                # Create VectorDBTool with mock backend
+                vector_db = VectorDBTool(
+                    base_path=f"{self.test_dir}/milvus", 
+                    backend="milvus"
+                )
+                
+                # Verify basic operations work with the mock
+                self.assertEqual(vector_db.backend_name, "milvus")
+                self.assertTrue(vector_db.create_collection("test_collection"))
+                
+                # Test that the methods delegated to the backend correctly
+                self.assertTrue(mock_instance.create_collection.called)
+                
+        except (ImportError, ValueError) as e:
+            self.skipTest(f"Milvus backend test skipped: {e}")
 
 
 if __name__ == '__main__':
