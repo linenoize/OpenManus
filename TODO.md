@@ -41,7 +41,12 @@ This file tracks planned improvements and unfinished features in the OpenManus p
   - [x] Implement descriptive error messages and fallbacks
   - [x] Add parameter validation to prevent invalid tool usage
   - [x] Add comprehensive tests for error cases
-- [ ] Create monitoring system for tool usage and performance
+- [x] Create monitoring system for tool usage and performance
+  - [x] Implement system-wide metrics collection
+  - [x] Add tool-specific performance tracking
+  - [x] Add LLM usage monitoring with token counting
+  - [x] Create persistent metrics storage
+  - [x] Add comprehensive tests and examples
 
 ## Documentation
 
