@@ -16,20 +16,20 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 ## Memory System
 
 - [x] Implement basic memory storage and retrieval
-- [ ] Enhance memory search with vector embeddings
-  - Replace simple text matching with semantic search
-  - Integrate with vector database for efficient similarity search
-  - Add memory relevance scoring system
-  - Implement memory chunking for long texts
+- [x] Enhance memory search with vector embeddings
+  - [x] Replace simple text matching with semantic search
+  - [x] Integrate with vector database for efficient similarity search
+  - [x] Add memory relevance scoring system
+  - [x] Implement memory chunking for long texts
 
 ## Vector Database
 
-- [ ] Create dedicated vector database tool
-  - Implement embedding generation (using sentence-transformers)
-  - Create vector storage and retrieval mechanism
-  - Add similarity search functionality
-  - Integrate with memory system for enhanced recall
-  - Support multiple vector database backends (FAISS, etc.)
+- [x] Create dedicated vector database tool
+  - [x] Implement embedding generation (using sentence-transformers)
+  - [x] Create vector storage and retrieval mechanism
+  - [x] Add similarity search functionality
+  - [x] Integrate with memory system for enhanced recall
+  - [ ] Support multiple vector database backends beyond FAISS
 
 ## Integration and Testing
 
