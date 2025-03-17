@@ -22,7 +22,7 @@ This repository provides a starting point for developers and researchers to buil
 - **Task Execution**: Supports tasks like travel planning, data analysis, and content generation.
 - **Tool Integration**: Web browsing, code execution, and data retrieval capabilities.
 - **Memory System**: Persistent memory across sessions with namespaces, search, and metadata.
-- **Vector Database**: Semantic search using FAISS and sentence embeddings for intelligent retrieval.
+- **Vector Database**: Semantic search with multiple backends (FAISS, ChromaDB, Milvus) and sentence embeddings for intelligent retrieval.
 - **Modular Design**: Easily extendable with new agents, tools, or features.
 - **Multiple LLM Support**: Integration with OpenAI (GPT-4o), Anthropic (Claude), and local models.
 - **LLM Preference System**: Customize which LLM to use for specific agents and tools.
@@ -45,10 +45,25 @@ git clone https://github.com/henryalps/OpenManus.git
 cd OpenManus
 ```
 
-### 2. Build and Run with Docker
+### 2. Install Dependencies (for local development)
 ```bash
-# Build and start all containers
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Install JavaScript dependencies for the frontend
+npm install
+```
+
+### 3. Build and Run with Docker
+```bash
+# Run with separate containers (standard setup)
 docker-compose up --build
+
+# OR use unified container (all services in one container)
+docker-compose -f docker-compose.unified.yml up --build
+
+# OR use development mode with hot-reloading
+docker-compose -f docker-compose.dev.yml up --build
 ```
 
 This will launch:
@@ -56,7 +71,9 @@ This will launch:
 - Frontend container serving the Next.js web interface
 - API server for task delegation and execution
 
-### 3. Test the System
+The unified container option simplifies deployment by running all services in a single container with Nginx as a reverse proxy (exposed on port 80).
+
+### 4. Test the System
 Once running, you can interact with OpenManus via:
 - CLI: Use the provided Python client
 - API: Send requests to http://localhost:5000 (see API docs below)
@@ -88,6 +105,11 @@ python src/client.py memory search --namespace research --query "Tesla"  # Searc
 # Vector database (semantic search) examples
 python examples/vector_db_usage.py  # Run the vector database demo
 # Try the example with your own queries to see semantic search in action
+
+# Use different vector database backends
+# Edit requirements.txt to uncomment the desired backend, then:
+pip install -e .  # Install with the selected backends
+python examples/vector_db_usage.py  # Will now show available backends
 ```
 
 ### Project Structure
@@ -96,18 +118,30 @@ OpenManus/
 ├── docker/               # Docker configurations
 │   ├── frontend/        # Next.js frontend container
 │   │   └── Dockerfile   # Frontend container configuration
-│   └── unified/         # Backend container configuration
-│       ├── Dockerfile   # Backend container configuration
-│       └── start.sh     # Container startup script
+│   ├── unified/         # Backend container configuration
+│   │   ├── Dockerfile   # Backend container configuration
+│   │   └── start.sh     # Container startup script
+│   └── unified-all/     # Unified container (all services)
+│       ├── Dockerfile   # Multi-stage build for all services
+│       ├── start.sh     # Unified startup script
+│       ├── nginx.conf   # Nginx reverse proxy configuration
+│       └── dev/         # Development mode configuration
 ├── src/                 # Source code
 │   ├── agents/          # Multi-agent logic (Python)
 │   ├── tools/           # Tool implementations
+│   │   ├── file_manager.py     # File management tool
+│   │   ├── memory_tool.py      # Memory storage and retrieval
+│   │   ├── vector_db_tool.py   # Vector database with multiple backends
+│   │   └── ...
 │   ├── client.py        # CLI client for testing
 │   └── server.py        # Main API server
+├── examples/            # Example usage scripts
 ├── docs/                # Documentation and API specs
 ├── package.json         # Next.js frontend dependencies
 ├── next.config.js       # Next.js configuration
-├── docker-compose.yml   # Docker Compose configuration
+├── docker-compose.yml   # Standard Docker Compose configuration
+├── docker-compose.unified.yml # Unified container configuration
+├── docker-compose.dev.yml # Development mode configuration
 └── README.md           # This file
 ```
 
@@ -274,7 +308,8 @@ Response: {
       "text": "The Transformer architecture has revolutionized NLP",
       "metadata": {"topic": "AI", "source": "research paper"},
       "timestamp": "2024-03-15T14:30:45.123456",
-      "similarity": 0.92
+      "similarity": 0.92,
+      "backend": "faiss"  // The backend used for this vector search
     },
     ...
   ]
@@ -323,13 +358,17 @@ Please read `CONTRIBUTING.md` for guidelines.
 - ✅ Implement core multi-agent coordination
 - ✅ Add persistent memory system for context retention
 - ✅ Add vector embedding database for semantic search
+- ✅ Add multiple vector database backends (FAISS, ChromaDB, Milvus)
+- ✅ Implement file management system with multiple storage options
 - Add support for GAIA benchmark tasks
 - Integrate advanced NLP models (e.g., LLaMA, Grok)
 - Enhance toolset with:
   - Real-time web scraping and visualization
-  - File management system
   - Document processing capabilities
   - Advanced RAG (Retrieval Augmented Generation) capabilities
+  - Structured data tool for CSV/JSON/database operations
+  - Metadata extraction tool for various file types
+  - Task decomposition tool for complex requests
 - Release v1.0 with stable task execution
 
 ### Inspiration
