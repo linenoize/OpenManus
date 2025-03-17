@@ -95,14 +95,54 @@ class TaskCoordinator:
             task_description (str): Natural language description of the task
 
         Returns:
-            dict: Result of the task execution
+            dict: Result of the task execution with status and details
         """
-        plan = self.agents['planner'].plan_task(task_description)
-        result = self.agents['executor'].execute_plan(plan, self.agents, self.tools)
-        return {
-            "status": "success",
-            "result": result
-        }
+        try:
+            # Log task start
+            print(f"Starting task execution: {task_description[:50]}...")
+            
+            # Generate execution plan
+            try:
+                plan = self.agents['planner'].plan_task(task_description)
+                if not plan or not isinstance(plan, dict) or "steps" not in plan:
+                    raise ValueError("Invalid plan format returned by planner agent")
+            except Exception as e:
+                print(f"Error during planning phase: {str(e)}")
+                return {
+                    "status": "error",
+                    "phase": "planning",
+                    "error": str(e),
+                    "result": f"Failed to create execution plan: {str(e)}"
+                }
+            
+            # Execute the plan
+            try:
+                result = self.agents['executor'].execute_plan(plan, self.agents, self.tools)
+            except Exception as e:
+                print(f"Error during execution phase: {str(e)}")
+                return {
+                    "status": "error",
+                    "phase": "execution",
+                    "error": str(e),
+                    "plan": plan,
+                    "result": f"Failed to execute plan: {str(e)}"
+                }
+                
+            # Return successful result
+            return {
+                "status": "success",
+                "result": result,
+                "plan": plan
+            }
+        except Exception as e:
+            # Catch-all for any unhandled exceptions
+            print(f"Unexpected error in task execution: {str(e)}")
+            return {
+                "status": "error",
+                "phase": "unknown",
+                "error": str(e),
+                "result": f"An unexpected error occurred: {str(e)}"
+            }
     
     def set_llm_preference(self, entity_type, entity_name, provider_name, reason=""):
         """
@@ -251,33 +291,107 @@ class ExecutionAgent:
         self.llm_service = llm_service
     
     def execute_plan(self, plan, agents, tools):
-        """Executes a given task plan."""
+        """
+        Executes a given task plan with improved error handling.
+        
+        Args:
+            plan: The execution plan with steps
+            agents: Dictionary of available agents
+            tools: Dictionary of available tools
+            
+        Returns:
+            String with execution results or error information
+        """
+        if not plan or not isinstance(plan, dict) or 'steps' not in plan:
+            return "Error: Invalid plan format. Plan must be a dictionary with a 'steps' key."
+        
+        if not plan['steps'] or not isinstance(plan['steps'], list):
+            return "Error: Plan steps must be a non-empty list."
+        
         results = []
-        for step in plan['steps']:
-            agent_name = step['agent']
-            action = step['action']
-            if agent_name == 'tool' and action == 'use_tool':
-                tool_name = step['tool_name']
-                tool_args = step['tool_args']
-                tool_result = agents['tool'].use_tool(tool_name, tool_args, tools)
+        for i, step in enumerate(plan['steps']):
+            step_num = i + 1
+            step_result = None
+            
+            try:
+                # Validate step format
+                if not isinstance(step, dict):
+                    raise ValueError(f"Step {step_num} is not a dictionary")
                 
-                # Use LLM to summarize the tool result if available
-                if self.llm_service and len(str(tool_result)) > 500:
+                # Log step execution
+                step_desc = f"Executing step {step_num}/{len(plan['steps'])}"
+                print(f"{step_desc}: {str(step)[:100]}...")
+                
+                # Extract step components with validation
+                if 'agent' not in step:
+                    raise ValueError(f"Step {step_num} is missing 'agent' field")
+                agent_name = step['agent']
+                
+                if 'action' not in step:
+                    raise ValueError(f"Step {step_num} is missing 'action' field")
+                action = step['action']
+                
+                # Execute based on agent and action
+                if agent_name == 'tool' and action == 'use_tool':
+                    # Validate tool parameters
+                    if 'tool_name' not in step:
+                        raise ValueError(f"Step {step_num} is missing 'tool_name' field")
+                    tool_name = step['tool_name']
+                    
+                    if 'tool_args' not in step:
+                        raise ValueError(f"Step {step_num} is missing 'tool_args' field")
+                    tool_args = step['tool_args']
+                    
+                    # Check if tool exists
+                    if tool_name not in tools:
+                        results.append(f"Warning in step {step_num}: Tool '{tool_name}' not found. Available tools: {', '.join(tools.keys())}")
+                        continue
+                    
+                    # Execute tool with exception handling
                     try:
-                        prompt = f"Summarize the following tool result concisely:\n{tool_result}"
-                        summary = self.llm_service.generate(
-                            prompt=prompt,
-                            provider_name=self.llm_service.get_preferred_provider("executor", "agent").capabilities["type"]
-                        )
-                        results.append(f"Tool '{tool_name}' used with args {tool_args}. Result summary: {summary}")
-                    except Exception as e:
-                        print(f"Error summarizing result with LLM: {e}")
-                        results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {tool_result}")
+                        tool_result = agents['tool'].use_tool(tool_name, tool_args, tools)
+                        step_result = tool_result
+                    except Exception as tool_error:
+                        error_msg = f"Error in step {step_num} using tool '{tool_name}': {str(tool_error)}"
+                        print(error_msg)
+                        results.append(error_msg)
+                        continue
+                    
+                    # Summarize long results if LLM service is available
+                    if self.llm_service and isinstance(tool_result, str) and len(tool_result) > 500:
+                        try:
+                            prompt = f"Summarize the following tool result concisely:\n{tool_result}"
+                            summary = self.llm_service.generate(
+                                prompt=prompt,
+                                provider_name=self.llm_service.get_preferred_provider("executor", "agent").capabilities["type"]
+                            )
+                            results.append(f"Tool '{tool_name}' used with args {tool_args}. Result summary: {summary}")
+                        except Exception as e:
+                            print(f"Warning: Error summarizing result with LLM: {e}")
+                            # Fallback to truncated result if summarization fails
+                            trunc_result = tool_result[:500] + "..." if len(tool_result) > 500 else tool_result
+                            results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {trunc_result}")
+                    else:
+                        # Format result based on type
+                        if isinstance(tool_result, (dict, list)):
+                            import json
+                            formatted_result = json.dumps(tool_result, indent=2)
+                            results.append(f"Tool '{tool_name}' used with args {tool_args}. Result:\n{formatted_result}")
+                        else:
+                            results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {tool_result}")
                 else:
-                    results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {tool_result}")
-            else:
-                results.append(f"Unknown step: {step}")
-        return "\n".join(results)
+                    results.append(f"Unsupported step {step_num}: agent='{agent_name}', action='{action}'. Currently only tool agent with use_tool action is supported.")
+            
+            except Exception as step_error:
+                error_msg = f"Error processing step {step_num}: {str(step_error)}"
+                print(error_msg)
+                results.append(error_msg)
+        
+        # Combine all results
+        if not results:
+            return "Warning: Plan executed but no results were produced."
+        
+        return "\n\n".join(results)
 
 
 class ToolAgent:
@@ -285,186 +399,340 @@ class ToolAgent:
     
     def __init__(self, llm_service=None):
         self.llm_service = llm_service
+        
+        # Define required parameters for each tool
+        self.tool_required_params = {
+            'web_browser': ['url'],
+            'code_executor': ['code', 'language'],
+            'data_retriever': ['query'],
+            'llm_service': ['prompt']
+        }
+        
+        # Define required parameters for each operation of complex tools
+        self.operation_required_params = {
+            'memory': {
+                'store': ['content'],
+                'get': ['memory_id'],
+                'get_all': [],
+                'search': ['query'],
+                'update': ['memory_id'],
+                'delete': ['memory_id'],
+                'list_namespaces': [],
+                'clear_namespace': ['namespace']
+            },
+            'vector_db': {
+                'create_collection': ['collection_name'],
+                'delete_collection': ['collection_name'],
+                'list_collections': [],
+                'add_text': ['collection_name', 'text'],
+                'add_texts': ['collection_name', 'texts'],
+                'search': ['collection_name', 'query'],
+                'get_by_id': ['collection_name', 'doc_id'],
+                'delete_by_id': ['collection_name', 'doc_id'],
+                'clear_collection': ['collection_name'],
+                'update_metadata': ['collection_name', 'doc_id', 'metadata'],
+                'get_collection_stats': ['collection_name']
+            },
+            'file_manager': {
+                'read_file': ['path'],
+                'read_text': ['path'],
+                'write_file': ['path', 'content'],
+                'write_text': ['path', 'content'],
+                'delete_file': ['path'],
+                'list_files': ['path'],
+                'file_exists': ['path'],
+                'create_directory': ['path'],
+                'rename_file': ['old_path', 'new_path'],
+                'get_storage_preferences': [],
+                'set_storage_preference': ['file_type', 'storage_type'],
+                'get_file_history': ['path'],
+                'initialize_backend': ['backend_type']
+            }
+        }
     
     def use_tool(self, tool_name, tool_args, tools):
-        """Uses a specific tool to perform an action."""
-        if tool_name in tools:
-            tool = tools[tool_name]
+        """
+        Uses a specific tool to perform an action with improved error handling.
+        
+        Args:
+            tool_name: Name of the tool to use
+            tool_args: Arguments to pass to the tool
+            tools: Dictionary of available tools
             
-            # If using LLM with tools, get preferred provider
-            if self.llm_service and tool_name in self.llm_service.tool_preferences:
-                provider_type = self.llm_service.get_preferred_provider(tool_name, "tool").capabilities["type"]
+        Returns:
+            The result of the tool operation or an error message
+        """
+        # Validate tool exists
+        if tool_name not in tools:
+            available_tools = ", ".join(tools.keys())
+            return f"Error: Tool '{tool_name}' not found. Available tools: {available_tools}"
+            
+        # Get the tool
+        try:
+            tool = tools[tool_name]
+        except Exception as e:
+            return f"Error accessing tool '{tool_name}': {str(e)}"
+            
+        # Log tool usage
+        print(f"Using tool: {tool_name} with args: {tool_args}")
+        
+        # If using LLM with tools, get preferred provider
+        if self.llm_service and tool_name in self.llm_service.tool_preferences:
+            try:
+                provider = self.llm_service.get_preferred_provider(tool_name, "tool")
+                provider_type = provider.capabilities["type"]
                 print(f"Using {provider_type} for tool: {tool_name}")
+            except Exception as e:
+                print(f"Warning: Error getting preferred provider: {str(e)}")
                 
-            # Execute the tool
-            if tool_name == 'web_browser':
-                return tool.browse_web(**tool_args)
-            elif tool_name == 'code_executor':
-                return tool.execute_code(**tool_args)
-            elif tool_name == 'data_retriever':
-                return tool.retrieve_data(**tool_args)
-            elif tool_name == 'memory':
-                # Handle memory tool operations
+        # Execute based on tool type
+        try:
+            # Simple tools
+            if tool_name in ['web_browser', 'code_executor', 'data_retriever']:
+                # Validate required parameters
+                missing_params = self._check_missing_params(
+                    tool_args, 
+                    self.tool_required_params.get(tool_name, [])
+                )
+                if missing_params:
+                    return f"Error: Tool '{tool_name}' is missing required parameters: {', '.join(missing_params)}"
+                
+                # Execute simple tool
+                if tool_name == 'web_browser':
+                    return tool.browse_web(**tool_args)
+                elif tool_name == 'code_executor':
+                    return tool.execute_code(**tool_args)
+                elif tool_name == 'data_retriever':
+                    return tool.retrieve_data(**tool_args)
+                    
+            # Tools with operations
+            elif tool_name in ['memory', 'vector_db', 'file_manager']:
+                # Validate operation parameter
+                if 'operation' not in tool_args:
+                    return f"Error: {tool_name.capitalize()} tool requires an 'operation' argument"
+                    
                 operation = tool_args.get('operation')
-                if not operation:
-                    return "Error: Memory tool requires an 'operation' argument"
                 
-                # Remove operation from args since it's not a parameter of the methods
+                # Check if operation is valid
+                if operation not in self.operation_required_params.get(tool_name, {}):
+                    valid_ops = ", ".join(self.operation_required_params.get(tool_name, {}).keys())
+                    return f"Error: Unknown {tool_name} operation: '{operation}'. Valid operations: {valid_ops}"
+                
+                # Validate required parameters for this operation
                 tool_args_copy = tool_args.copy()
-                del tool_args_copy['operation']
+                del tool_args_copy['operation']  # Remove operation for validation
                 
-                # Call the appropriate method based on operation
+                required_params = self.operation_required_params[tool_name][operation]
+                missing_params = self._check_missing_params(tool_args_copy, required_params)
+                if missing_params:
+                    return f"Error: Operation '{operation}' requires parameters: {', '.join(missing_params)}"
+                
+                # Execute operations for specific tools
+                return self._execute_tool_operation(tool, tool_name, operation, tool_args_copy)
+                
+            # LLM service
+            elif tool_name == 'llm_service':
+                if 'prompt' not in tool_args:
+                    return "Error: LLM service requires a 'prompt' argument"
+                
+                provider = tool_args.get('provider', None)
+                return tool.generate(tool_args['prompt'], provider_name=provider)
+                
+            # Unknown tool type
+            else:
+                return f"Error: Tool '{tool_name}' has no implementation defined."
+                
+        except Exception as e:
+            error_msg = f"Error executing tool '{tool_name}': {str(e)}"
+            print(error_msg)
+            return error_msg
+    
+    def _check_missing_params(self, args, required_params):
+        """Check for missing required parameters."""
+        missing = []
+        for param in required_params:
+            if param not in args:
+                missing.append(param)
+        return missing
+    
+    def _execute_tool_operation(self, tool, tool_name, operation, args):
+        """Execute a specific operation on a tool."""
+        try:
+            # Memory tool operations
+            if tool_name == 'memory':
                 if operation == 'store':
-                    result = tool.store(**tool_args_copy)
+                    result = tool.store(**args)
                     return f"Memory stored with ID: {result['id']}"
+                    
                 elif operation == 'get':
-                    result = tool.get(**tool_args_copy)
+                    result = tool.get(**args)
                     return result if result else "Memory not found"
+                    
                 elif operation == 'get_all':
-                    result = tool.get_all(**tool_args_copy)
+                    result = tool.get_all(**args)
                     return f"Retrieved {len(result)} memories"
+                    
                 elif operation == 'search':
-                    result = tool.search(**tool_args_copy)
+                    result = tool.search(**args)
+                    if not result:
+                        return "No matching memories found"
                     return f"Found {len(result)} matching memories: {result}"
+                    
                 elif operation == 'update':
-                    result = tool.update(**tool_args_copy)
-                    return "Memory updated successfully" if result else "Memory not found"
+                    result = tool.update(**args)
+                    return "Memory updated successfully" if result else "Memory not found or update failed"
+                    
                 elif operation == 'delete':
-                    result = tool.delete(**tool_args_copy)
-                    return "Memory deleted successfully" if result else "Memory not found"
+                    result = tool.delete(**args)
+                    return "Memory deleted successfully" if result else "Memory not found or delete failed"
+                    
                 elif operation == 'list_namespaces':
                     result = tool.list_namespaces()
+                    if not result:
+                        return "No namespaces found"
                     return f"Available namespaces: {result}"
+                    
                 elif operation == 'clear_namespace':
-                    result = tool.clear_namespace(**tool_args_copy)
-                    return "Namespace cleared successfully" if result else "Namespace not found"
-                else:
-                    return f"Unknown memory operation: {operation}"
+                    result = tool.clear_namespace(**args)
+                    return "Namespace cleared successfully" if result else "Namespace not found or clear failed"
+            
+            # Vector DB tool operations
             elif tool_name == 'vector_db':
-                # Handle vector database operations
-                operation = tool_args.get('operation')
-                if not operation:
-                    return "Error: VectorDB tool requires an 'operation' argument"
-                
-                # Remove operation from args since it's not a parameter of the methods
-                tool_args_copy = tool_args.copy()
-                del tool_args_copy['operation']
-                
-                # Call the appropriate method based on operation
                 if operation == 'create_collection':
-                    result = tool.create_collection(**tool_args_copy)
+                    result = tool.create_collection(**args)
                     return f"Collection created: {result}"
+                    
                 elif operation == 'delete_collection':
-                    result = tool.delete_collection(**tool_args_copy)
+                    result = tool.delete_collection(**args)
                     return f"Collection deleted: {result}"
+                    
                 elif operation == 'list_collections':
                     result = tool.list_collections()
+                    if not result:
+                        return "No collections found"
                     return f"Available collections: {result}"
+                    
                 elif operation == 'add_text':
-                    result = tool.add_text(**tool_args_copy)
+                    result = tool.add_text(**args)
+                    if not result:
+                        return "Failed to add document"
                     return f"Document added with ID: {result}"
+                    
                 elif operation == 'add_texts':
-                    result = tool.add_texts(**tool_args_copy)
+                    result = tool.add_texts(**args)
+                    if not result:
+                        return "Failed to add documents"
                     return f"Added {len(result)} documents with IDs: {result}"
+                    
                 elif operation == 'search':
-                    result = tool.search(**tool_args_copy)
+                    result = tool.search(**args)
+                    if not result:
+                        return "No similar documents found"
                     return f"Found {len(result)} similar documents: {result}"
+                    
                 elif operation == 'get_by_id':
-                    result = tool.get_by_id(**tool_args_copy)
+                    result = tool.get_by_id(**args)
                     return result if result else "Document not found"
+                    
                 elif operation == 'delete_by_id':
-                    result = tool.delete_by_id(**tool_args_copy)
-                    return "Document deleted successfully" if result else "Document not found"
+                    result = tool.delete_by_id(**args)
+                    return "Document deleted successfully" if result else "Document not found or delete failed"
+                    
                 elif operation == 'clear_collection':
-                    result = tool.clear_collection(**tool_args_copy)
-                    return "Collection cleared successfully" if result else "Collection not found"
+                    result = tool.clear_collection(**args)
+                    return "Collection cleared successfully" if result else "Collection not found or clear failed"
+                    
                 elif operation == 'update_metadata':
-                    result = tool.update_metadata(**tool_args_copy)
-                    return "Metadata updated successfully" if result else "Document not found"
+                    result = tool.update_metadata(**args)
+                    return "Metadata updated successfully" if result else "Document not found or update failed"
+                    
                 elif operation == 'get_collection_stats':
-                    result = tool.get_collection_stats(**tool_args_copy)
+                    result = tool.get_collection_stats(**args)
                     return f"Collection stats: {result}" if result else "Collection not found"
-                else:
-                    return f"Unknown vector_db operation: {operation}"
+            
+            # File manager operations
             elif tool_name == 'file_manager':
-                # Handle file manager operations
-                operation = tool_args.get('operation')
-                if not operation:
-                    return "Error: FileManager tool requires an 'operation' argument"
-                
-                # Remove operation from args since it's not a parameter of the methods
-                tool_args_copy = tool_args.copy()
-                del tool_args_copy['operation']
-                
-                # Call the appropriate method based on operation
                 if operation == 'read_file':
-                    result = tool.read_file(**tool_args_copy)
+                    result = tool.read_file(**args)
                     if result is None:
-                        return "Error reading file"
+                        return "Error: File not found or cannot be read"
                     return f"File read successfully ({len(result)} bytes)"
                     
                 elif operation == 'read_text':
-                    result = tool.read_text(**tool_args_copy)
+                    result = tool.read_text(**args)
                     if result is None:
-                        return "Error reading file"
+                        return "Error: File not found or cannot be read"
                     preview = result[:100] + "..." if len(result) > 100 else result
                     return f"File content: {preview}"
                     
                 elif operation == 'write_file':
-                    result = tool.write_file(**tool_args_copy)
-                    return "File written successfully" if result else "Error writing file"
+                    result = tool.write_file(**args)
+                    if not result:
+                        return "Error: Failed to write file"
+                    return f"File written successfully to: {args.get('path')}"
                     
                 elif operation == 'write_text':
-                    result = tool.write_text(**tool_args_copy)
-                    return "File written successfully" if result else "Error writing file"
+                    result = tool.write_text(**args)
+                    if not result:
+                        return "Error: Failed to write file"
+                    return f"File written successfully to: {args.get('path')}"
                     
                 elif operation == 'delete_file':
-                    result = tool.delete_file(**tool_args_copy)
-                    return "File deleted successfully" if result else "Error deleting file or file not found"
+                    result = tool.delete_file(**args)
+                    if not result:
+                        return "Error: File not found or cannot be deleted"
+                    return f"File deleted successfully: {args.get('path')}"
                     
                 elif operation == 'list_files':
-                    result = tool.list_files(**tool_args_copy)
+                    result = tool.list_files(**args)
+                    if not result:
+                        return "No files found in the specified path"
                     return f"Found {len(result)} files: {result}"
                     
                 elif operation == 'file_exists':
-                    result = tool.file_exists(**tool_args_copy)
+                    result = tool.file_exists(**args)
                     return f"File exists: {result}"
                     
                 elif operation == 'create_directory':
-                    result = tool.create_directory(**tool_args_copy)
-                    return "Directory created successfully" if result else "Error creating directory"
+                    result = tool.create_directory(**args)
+                    if not result:
+                        return "Error: Failed to create directory"
+                    return f"Directory created successfully: {args.get('path')}"
                     
                 elif operation == 'rename_file':
-                    result = tool.rename_file(**tool_args_copy)
-                    return "File renamed successfully" if result else "Error renaming file or file not found"
+                    result = tool.rename_file(**args)
+                    if not result:
+                        return "Error: File not found or cannot be renamed"
+                    return f"File renamed successfully from {args.get('old_path')} to {args.get('new_path')}"
                     
                 elif operation == 'get_storage_preferences':
                     result = tool.get_storage_preferences()
                     return f"Storage preferences: {result}"
                     
                 elif operation == 'set_storage_preference':
-                    result = tool.set_storage_preference(**tool_args_copy)
-                    return "Storage preference updated successfully" if result else "Error updating storage preference"
+                    result = tool.set_storage_preference(**args)
+                    if not result:
+                        return "Error: Failed to update storage preference"
+                    return f"Storage preference updated successfully for file type: {args.get('file_type')}"
                     
                 elif operation == 'get_file_history':
-                    result = tool.get_file_history(**tool_args_copy)
+                    result = tool.get_file_history(**args)
+                    if not result:
+                        return "No file history found"
                     return f"File history: {result}"
                     
                 elif operation == 'initialize_backend':
-                    result = tool.initialize_backend(**tool_args_copy)
-                    return "Backend initialized successfully" if result else "Error initializing backend"
-                    
-                else:
-                    return f"Unknown file_manager operation: {operation}"
-                    
-            elif tool_name == 'llm_service':
-                # Direct access to LLM service as a tool
-                if 'prompt' in tool_args:
-                    provider = tool_args.get('provider', None)
-                    return tool.generate(tool_args['prompt'], provider_name=provider)
-                else:
-                    return "Error: LLM service requires a 'prompt' argument"
-            else:
-                return f"Tool '{tool_name}' not yet fully implemented."
-        else:
-            return f"Tool '{tool_name}' not found."
+                    result = tool.initialize_backend(**args)
+                    if not result:
+                        return f"Error: Failed to initialize backend: {args.get('backend_type')}"
+                    return f"Backend initialized successfully: {args.get('backend_type')}"
+            
+            # Should never reach here due to validation
+            return f"Error: Unknown operation for {tool_name}: {operation}"
+            
+        except AttributeError as e:
+            return f"Error: Tool does not support operation '{operation}': {str(e)}"
+        except TypeError as e:
+            return f"Error: Invalid parameters for operation '{operation}': {str(e)}"
+        except Exception as e:
+            return f"Error executing {tool_name} operation '{operation}': {str(e)}"
