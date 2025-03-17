@@ -25,6 +25,21 @@ This file tracks planned improvements and unfinished features in the OpenManus p
   - [x] Add similarity search functionality
   - [x] Integrate with memory system for enhanced recall
 
+## Docker and Deployment
+
+- [ ] Implement unified Docker container
+  - [x] Create multi-stage build Dockerfile
+  - [x] Create startup script for all services
+  - [x] Create unified docker-compose configuration
+  - [x] Set up Nginx as reverse proxy to expose single port
+  - [x] Add error pages and proper error handling
+  - [x] Implement service startup checks and graceful shutdown
+  - [x] Add health check endpoint
+  - [ ] Test unified container with all services
+  - [ ] Add development mode with live code reloading
+  - [ ] Document Docker deployment process
+  - [ ] Optimize container size and build time
+
 ## Integration and Testing
 
 - [x] Create comprehensive test suite for all tools
@@ -57,7 +72,7 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 
 ## Future Enhancements
 
-- [ ] Implement OneDrive storage backend
+- [ ] Implement OneDrive storage backend (LOW PRIORITY)
   - Current implementation is a placeholder
   - Need to add Microsoft Graph API integration
   - Implement authentication flow (similar to Google Drive)

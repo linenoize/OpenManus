@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  unified:
+    build: 
+      context: .
+      dockerfile: docker/unified-all/Dockerfile
+    ports:
+      - "80:80"  # Single exposed port through nginx
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - FLASK_APP=src/server.py
+      - FLASK_ENV=development
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./.env:/app/.env
