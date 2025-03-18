@@ -1,4 +1,4 @@
-version: '3.8'
+# Docker Compose configuration for unified deployment
 
 services:
   unified:
@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: docker/unified-all/Dockerfile
     ports:
-      - "80:80"  # Single exposed port through nginx
+      - "8080:80"  # Single exposed port through nginx
     env_file:
       - .env
     environment:

@@ -19,10 +19,11 @@ TOOLS_PORT=${TOOLS_PORT:-5001}
 # Export ports for child processes
 export FRONTEND_PORT API_PORT TOOLS_PORT
 
-# Start Next.js frontend
-echo "Starting Next.js frontend on port $FRONTEND_PORT..."
-PORT=$FRONTEND_PORT npm start &
-NEXT_PID=$!
+# Create static page instead of starting Next.js frontend
+echo "Setting up static frontend page..."
+mkdir -p /app/public
+echo '<html><body><h1>OpenManus</h1><p>Frontend temporarily disabled</p></body></html>' > /app/public/index.html
+NEXT_PID=0
 
 # Start Flask backend server
 echo "Starting Flask backend server on port $API_PORT..."
