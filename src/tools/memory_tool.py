@@ -6,9 +6,11 @@ from datetime import datetime
 import textwrap
 from collections import defaultdict
 
+# Set nltk data path to look in system directory first
+nltk.data.path = ['/usr/local/share/nltk_data'] + nltk.data.path
+
 try:
-    # Try to import nltk for tokenization
-    nltk.download('punkt', quiet=True)
+    # Use pre-downloaded punkt tokenizer
     from nltk.tokenize import sent_tokenize
 except ImportError:
     # Fallback to a simple split method if nltk is not available

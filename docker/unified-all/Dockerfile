@@ -24,7 +24,9 @@ FROM python:3.9-slim AS python-deps
 WORKDIR /app
 
 # Install Python dependencies for testing
-RUN pip install --no-cache-dir flask requests python-dotenv nltk
+RUN pip install --no-cache-dir flask requests python-dotenv nltk && \
+    # Pre-download NLTK data to avoid permission issues
+    python -c "import nltk; nltk.download('punkt', download_dir='/usr/local/share/nltk_data')"
 
 # Stage 3: Final runtime image
 FROM python:3.9-slim
