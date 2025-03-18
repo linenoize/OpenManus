@@ -23,9 +23,8 @@ FROM python:3.9-slim AS python-deps
 
 WORKDIR /app
 
-# Install Python dependencies from requirements.txt
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install minimal Python dependencies for testing
+RUN pip install --no-cache-dir flask requests python-dotenv
 
 # Stage 3: Final runtime image
 FROM python:3.9-slim
