@@ -169,3 +169,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+credentials/onedrive_credentials.json
+credentials/google_drive_credentials.json
