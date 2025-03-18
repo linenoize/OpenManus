@@ -20,5 +20,7 @@ services:
       - API_PATH=api
     volumes:
       - ./src:/app/src
-      - ./data:/app/data
+      - ./data:/app/data:rw
       - ./.env:/app/.env
+    # Ensure the container can create the directory if it doesn't exist yet
+    user: "${UID:-1000}:${GID:-1000}"

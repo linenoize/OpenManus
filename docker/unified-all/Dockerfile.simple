@@ -56,9 +56,16 @@ RUN chmod +x ./start.sh
 # Expose only port 80 for the nginx proxy
 EXPOSE 80
 
+# Create data directories with proper permissions
+RUN mkdir -p /app/data/files/local /app/data/files/git
+
 # Set default non-root user for security
 RUN groupadd -r openmanus && useradd -r -g openmanus openmanus
 RUN chown -R openmanus:openmanus /app /var/log/nginx /var/lib/nginx
+
+# Ensure data directories have proper permissions
+RUN chmod -R 755 /app/data
+
 USER openmanus
 
 # Start all services

@@ -11,6 +11,21 @@ mkdir -p /var/log/nginx
 touch /var/log/nginx/access.log
 touch /var/log/nginx/error.log
 
+# Create data directories if they don't exist
+echo "Ensuring data directories exist with proper permissions..."
+mkdir -p /app/data/files/local
+mkdir -p /app/data/files/git
+
+# Check if we have permission to write to data directories
+if [ ! -w "/app/data/files/local" ] || [ ! -w "/app/data/files/git" ]; then
+    echo "WARNING: Cannot write to data directories. File operations may fail."
+    echo "Current permissions:"
+    ls -la /app/data
+    ls -la /app/data/files
+else
+    echo "Data directories are writable."
+fi
+
 # Get port configurations from environment variables or use defaults
 FRONTEND_PORT=${FRONTEND_PORT:-3000}
 API_PORT=${API_PORT:-5000}

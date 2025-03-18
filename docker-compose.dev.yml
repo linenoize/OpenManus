@@ -23,12 +23,14 @@ services:
     volumes:
       # Mount source directories for live development
       - ./src:/app/src
-      - ./data:/app/data
+      - ./data:/app/data:rw
       - ./public:/app/public
       - ./pages:/app/pages
       - ./components:/app/components
       - ./styles:/app/styles
       - ./.env:/app/.env
+    # Use host user for proper file permissions
+    user: "${UID:-1000}:${GID:-1000}"
     # Allow for interactive terminal
     stdin_open: true
     tty: true

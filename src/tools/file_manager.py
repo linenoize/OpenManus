@@ -100,7 +100,31 @@ class LocalStorageBackend(StorageBackend):
     
     def __init__(self, base_path: str = "data/files/local"):
         self.base_path = pathlib.Path(base_path)
-        os.makedirs(self.base_path, exist_ok=True)
+        try:
+            os.makedirs(self.base_path, exist_ok=True)
+            print(f"Successfully initialized storage at {self.base_path}")
+        except PermissionError:
+            print(f"WARNING: Permission denied creating directory {self.base_path}")
+            print(f"Will attempt to use existing directories or fallback to temporary storage")
+            # Try to use a temporary directory as fallback
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            temp_storage_path = os.path.join(temp_dir, "openmanus_storage")
+            try:
+                os.makedirs(temp_storage_path, exist_ok=True)
+                self.base_path = pathlib.Path(temp_storage_path)
+                print(f"Using fallback storage location: {self.base_path}")
+            except Exception as e:
+                print(f"ERROR: Failed to create fallback storage: {e}")
+                # Last resort: use the current directory
+                self.base_path = pathlib.Path('.')
+                print(f"Using current directory as storage location")
+        except Exception as e:
+            print(f"ERROR: Failed to initialize storage at {self.base_path}: {e}")
+            # Fallback to current directory
+            self.base_path = pathlib.Path('.')
+            print(f"Using current directory as storage location")
+            
         # Initialize mimetypes
         mimetypes.init()
     
@@ -347,10 +371,39 @@ class GitStorageBackend(StorageBackend):
         self.repo_path = pathlib.Path(repo_path)
         self.user_name = user_name
         self.user_email = user_email
+        self.initialized = False
         
-        # Ensure the repo path exists
-        os.makedirs(self.repo_path, exist_ok=True)
-        
+        try:
+            # Ensure the repo path exists
+            os.makedirs(self.repo_path, exist_ok=True)
+            print(f"Successfully created Git repository directory at {self.repo_path}")
+        except PermissionError:
+            print(f"WARNING: Permission denied creating directory {self.repo_path}")
+            print(f"Will attempt to use existing directories or fallback to temporary storage")
+            # Try to use a temporary directory as fallback
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            temp_storage_path = os.path.join(temp_dir, "openmanus_git_storage")
+            try:
+                os.makedirs(temp_storage_path, exist_ok=True)
+                self.repo_path = pathlib.Path(temp_storage_path)
+                print(f"Using fallback Git storage location: {self.repo_path}")
+            except Exception as e:
+                print(f"ERROR: Failed to create fallback Git storage: {e}")
+                # Last resort: use the current directory
+                self.repo_path = pathlib.Path('git_storage')
+                try:
+                    os.makedirs(self.repo_path, exist_ok=True)
+                    print(f"Using current directory as Git storage location: {self.repo_path}")
+                except Exception as e2:
+                    print(f"ERROR: Could not create Git storage anywhere: {e2}")
+                    self.initialized = False
+                    return
+        except Exception as e:
+            print(f"ERROR: Failed to initialize Git storage at {self.repo_path}: {e}")
+            self.initialized = False
+            return
+            
         # Initialize mimetypes
         mimetypes.init()
         
@@ -370,17 +423,30 @@ class GitStorageBackend(StorageBackend):
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 
                 # Initial commit
-                with open(self.repo_path / "README.md", "w") as f:
-                    f.write(f"# OpenManus Git Storage\n\nThis repository is managed by OpenManus File Manager.")
-                
-                subprocess.run(["git", "add", "README.md"], 
-                               cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                subprocess.run(["git", "commit", "-m", "Initial commit"], 
-                               cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    with open(self.repo_path / "README.md", "w") as f:
+                        f.write(f"# OpenManus Git Storage\n\nThis repository is managed by OpenManus File Manager.")
+                    
+                    subprocess.run(["git", "add", "README.md"], 
+                                   cwd=self.repo_path, check=True, 
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    subprocess.run(["git", "commit", "-m", "Initial commit"], 
+                                   cwd=self.repo_path, check=True, 
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    print(f"Git repository successfully initialized at {self.repo_path}")
+                    self.initialized = True
+                except Exception as e:
+                    print(f"WARNING: Could not create initial commit: {e}")
+                    self.initialized = False
             except subprocess.CalledProcessError as e:
                 print(f"Error initializing git repository: {e}")
+                self.initialized = False
+            except Exception as e:
+                print(f"Unexpected error during Git initialization: {e}")
+                self.initialized = False
+        else:
+            self.initialized = True
+            print(f"Using existing Git repository at {self.repo_path}")
     
     def _full_path(self, path: str) -> pathlib.Path:
         """Get the full path by joining with repo_path."""
@@ -392,11 +458,21 @@ class GitStorageBackend(StorageBackend):
     
     def read_file(self, path: str) -> bytes:
         """Read a file and return its contents as bytes."""
+        if not self.initialized:
+            print("WARNING: Git repository not properly initialized")
+            raise IOError("Git repository not properly initialized")
+            
         try:
             with open(self._full_path(path), 'rb') as f:
                 return f.read()
         except FileNotFoundError:
             raise FileNotFoundError(f"File not found: {path}")
+        except PermissionError:
+            print(f"Permission denied when reading {path}")
+            raise PermissionError(f"Permission denied when reading {path}")
+        except Exception as e:
+            print(f"Unexpected error reading file {path}: {e}")
+            raise
     
     def write_file(self, path: str, content: bytes, commit_message: Optional[str] = None) -> bool:
         """
@@ -410,6 +486,23 @@ class GitStorageBackend(StorageBackend):
         Returns:
             True if successful, False otherwise
         """
+        if not self.initialized:
+            print("WARNING: Git repository not properly initialized")
+            # Try to write the file anyway without git operations
+            try:
+                full_path = self._full_path(path)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                
+                # Write the file
+                with open(full_path, 'wb') as f:
+                    f.write(content)
+                
+                print(f"File written to {full_path} but not committed (Git not initialized)")
+                return True
+            except Exception as e:
+                print(f"Error writing file (Git not initialized): {e}")
+                return False
+            
         try:
             full_path = self._full_path(path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -418,18 +511,28 @@ class GitStorageBackend(StorageBackend):
             with open(full_path, 'wb') as f:
                 f.write(content)
             
-            # Stage the file
-            subprocess.run(["git", "add", path], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Commit the change
-            message = commit_message or f"Update file: {path}"
-            subprocess.run(["git", "commit", "-m", message], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                # Stage the file
+                subprocess.run(["git", "add", path], 
+                               cwd=self.repo_path, check=True, 
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                # Commit the change
+                message = commit_message or f"Update file: {path}"
+                subprocess.run(["git", "commit", "-m", message], 
+                               cwd=self.repo_path, check=True, 
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                print(f"File successfully written and committed: {path}")
+            except Exception as git_error:
+                print(f"WARNING: File written but git operations failed: {git_error}")
+                # The file was written successfully even though git operations failed
+                return True
             
             return True
+        except PermissionError as e:
+            print(f"Permission denied when writing to {path}: {e}")
+            return False
         except Exception as e:
             print(f"Error writing to git repository: {e}")
             return False
