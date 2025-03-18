@@ -13,6 +13,8 @@ OpenManus uses a layered configuration approach with the following precedence (h
 
 The recommended approach is to use the `.env` file for all configuration settings, as this provides a single location for most configuration needs.
 
+> **Note:** As of the latest update, the configuration system has been unified. All tools now use the `Config` class from `src/config.py` to access configuration values, with consistent environment variable overrides.
+
 ## Environment Configuration (.env)
 
 The primary configuration method is through the `.env` file in the project root directory. This file contains all environment variables that configure OpenManus.
@@ -142,6 +144,21 @@ OPENMANUS_MONITORING_ENABLED=1  # Enable monitoring (1/0)
 OPENMANUS_LOG_PATH=data/logs  # Path to store log files
 OPENMANUS_METRICS_PATH=data/metrics  # Path to store metrics data
 OPENMANUS_METRICS_SAVE_INTERVAL=300  # Seconds between metrics saves
+```
+
+### Task Decomposition Configuration
+
+```bash
+OPENMANUS_TASK_STORAGE_PATH=data/tasks  # Path to store task data
+OPENMANUS_TASK_NOTIFICATIONS=0  # Enable task status notifications (1/0)
+```
+
+### Document Processing Configuration
+
+```bash
+OPENMANUS_DOCUMENT_CACHE_DIR=data/document_cache  # Path to cache processed documents
+OPENMANUS_DOCUMENT_ENABLE_OCR=0  # Enable OCR capabilities (1/0)
+OPENMANUS_DOCUMENT_ENABLE_ADVANCED=0  # Enable advanced document analysis (1/0)
 ```
 
 ### Web Browser Tool Configuration
@@ -320,5 +337,12 @@ Below is a complete reference of all environment variables supported by OpenManu
 | OPENMANUS_LOG_PATH | Path to store log files | "data/logs" |
 | OPENMANUS_METRICS_PATH | Path to store metrics data | "data/metrics" |
 | OPENMANUS_METRICS_SAVE_INTERVAL | Seconds between metrics saves | 300 |
+| **Task Decomposition** | | |
+| OPENMANUS_TASK_STORAGE_PATH | Path to store task data | "data/tasks" |
+| OPENMANUS_TASK_NOTIFICATIONS | Enable task notifications (1/0) | 0 |
+| **Document Processing** | | |
+| OPENMANUS_DOCUMENT_CACHE_DIR | Path to cache processed documents | "data/document_cache" |
+| OPENMANUS_DOCUMENT_ENABLE_OCR | Enable OCR capabilities (1/0) | 0 |
+| OPENMANUS_DOCUMENT_ENABLE_ADVANCED | Enable advanced document analysis (1/0) | 0 |
 | **Other Tools** | | |
 | WEB_BROWSER_API_KEY | API key for web browser tool | None |

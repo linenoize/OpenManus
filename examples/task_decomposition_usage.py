@@ -11,24 +11,47 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add the project root to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import the Task Decomposition Tool
+# Import the Task Decomposition Tool and config
 from src.tools.task_decomposition import TaskDecompositionTool, TaskStatus, TaskPriority
+from src.config import load_config, Config
 
 def main():
     """Main function demonstrating Task Decomposition Tool usage."""
     print("Task Decomposition Tool Usage Example")
     print("=" * 50)
     
-    # Initialize the tool
+    # Initialize the tool with config
     print("\nInitializing Task Decomposition Tool...")
-    task_tool = TaskDecompositionTool(
-        storage_path="data/tasks_example",
-        enable_notifications=True
-    )
+    
+    # Show both direct initialization and config-based initialization
+    
+    # Create a custom config object for demonstration
+    print("Creating custom configuration...")
+    config = Config({
+        "tools": {
+            "task_decomposition": {
+                "storage_path": "data/tasks_example",
+                "enable_notifications": True
+            }
+        }
+    })
+    
+    # Initialize using config
+    task_tool = TaskDecompositionTool(config_obj=config)
+    print(f"Tool initialized with storage path: {task_tool.storage_path}")
+    print(f"Notifications enabled: {task_tool.enable_notifications}")
+    
+    # NOTE: You could also initialize with environment variables:
+    # export OPENMANUS_TASK_STORAGE_PATH=data/tasks_example
+    # export OPENMANUS_TASK_NOTIFICATIONS=1
     
     # 1. Create a main task (project)
     print("\n1. Creating a Main Project Task")

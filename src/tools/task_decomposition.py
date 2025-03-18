@@ -16,6 +16,9 @@ from enum import Enum
 from datetime import datetime
 import uuid
 
+# Import config system
+from src.config import load_config, Config
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -44,15 +47,36 @@ class TaskDecompositionTool:
     """
     
     def __init__(self, 
-                storage_path: str = "data/tasks",
-                enable_notifications: bool = False):
+                storage_path: str = None,
+                enable_notifications: bool = None,
+                config_obj: Config = None):
         """
         Initialize the task decomposition tool.
         
         Args:
-            storage_path: Path for storing task data
-            enable_notifications: Whether to enable notifications for task status changes
+            storage_path: Path for storing task data (overrides config)
+            enable_notifications: Whether to enable notifications for task status changes (overrides config)
+            config_obj: Config object for configuration
         """
+        # Load configuration
+        if config_obj is None:
+            config_obj = load_config()
+            
+        # Get configuration or use defaults
+        if storage_path is None:
+            storage_path = config_obj.get_tool_config(
+                "task_decomposition", 
+                "storage_path", 
+                os.environ.get("OPENMANUS_TASK_STORAGE_PATH", "data/tasks")
+            )
+            
+        if enable_notifications is None:
+            enable_notifications = config_obj.get_tool_config(
+                "task_decomposition", 
+                "enable_notifications", 
+                os.environ.get("OPENMANUS_TASK_NOTIFICATIONS", "0").lower() in ("1", "true", "yes")
+            )
+        
         self.storage_path = os.path.abspath(storage_path)
         self.enable_notifications = enable_notifications
         self.tasks = {}  # In-memory cache of tasks

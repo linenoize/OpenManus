@@ -20,6 +20,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Tuple, BinaryIO
 
+# Import config system
+from src.config import load_config, Config
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -31,17 +34,45 @@ class DocumentProcessingTool:
     """
     
     def __init__(self, 
-                cache_dir: str = "data/document_cache",
-                enable_ocr: bool = False,
-                enable_advanced_analysis: bool = False):
+                cache_dir: str = None,
+                enable_ocr: bool = None,
+                enable_advanced_analysis: bool = None,
+                config_obj: Config = None):
         """
         Initialize the document processing tool.
         
         Args:
-            cache_dir: Directory for caching processed documents
-            enable_ocr: Whether to enable OCR capabilities
-            enable_advanced_analysis: Whether to enable advanced document analysis
+            cache_dir: Directory for caching processed documents (overrides config)
+            enable_ocr: Whether to enable OCR capabilities (overrides config)
+            enable_advanced_analysis: Whether to enable advanced document analysis (overrides config)
+            config_obj: Config object for configuration
         """
+        # Load configuration
+        if config_obj is None:
+            config_obj = load_config()
+            
+        # Get configuration or use defaults
+        if cache_dir is None:
+            cache_dir = config_obj.get_tool_config(
+                "document_processing", 
+                "cache_dir", 
+                os.environ.get("OPENMANUS_DOCUMENT_CACHE_DIR", "data/document_cache")
+            )
+            
+        if enable_ocr is None:
+            enable_ocr = config_obj.get_tool_config(
+                "document_processing", 
+                "enable_ocr", 
+                os.environ.get("OPENMANUS_DOCUMENT_ENABLE_OCR", "0").lower() in ("1", "true", "yes")
+            )
+            
+        if enable_advanced_analysis is None:
+            enable_advanced_analysis = config_obj.get_tool_config(
+                "document_processing", 
+                "enable_advanced_analysis", 
+                os.environ.get("OPENMANUS_DOCUMENT_ENABLE_ADVANCED", "0").lower() in ("1", "true", "yes")
+            )
+        
         self.cache_dir = os.path.abspath(cache_dir)
         self.enable_ocr = enable_ocr
         self.enable_advanced_analysis = enable_advanced_analysis
