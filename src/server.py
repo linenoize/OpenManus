@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
-from agents.coordinator import TaskCoordinator
 import logging
 import os
+import sys
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -10,44 +10,147 @@ load_dotenv()
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-coordinator = TaskCoordinator()
+
+# Dictionary to track available modules and features
+available_features = {
+    'task_coordinator': False,
+    'llm_service': False,
+    'agents': {
+        'planner': False,
+        'executor': False,
+        'tool': False
+    },
+    'tools': {}
+}
+
+# Initialize coordinator with error handling
+try:
+    from agents.coordinator import TaskCoordinator
+    coordinator = TaskCoordinator()
+    available_features['task_coordinator'] = True
+    
+    # Check which components were successfully initialized
+    if coordinator.llm_service:
+        available_features['llm_service'] = True
+        
+    for agent_name, agent in coordinator.agents.items():
+        if agent:
+            available_features['agents'][agent_name] = True
+            
+    for tool_name, tool in coordinator.tools.items():
+        if tool:
+            available_features['tools'][tool_name] = True
+    
+    logger.info("Coordinator initialized successfully")
+except ImportError as e:
+    logger.error(f"Failed to import TaskCoordinator: {e}")
+    coordinator = None
+except Exception as e:
+    logger.error(f"Failed to initialize coordinator: {e}")
+    coordinator = None
+
+# Helper function to check if coordinator is available
+def check_coordinator_available():
+    """Check if the coordinator is available and return appropriate response if not"""
+    if coordinator is None:
+        return jsonify({
+            'status': 'error',
+            'error': 'Coordinator is not initialized',
+            'message': 'The system is starting up or missing dependencies',
+            'available_features': available_features
+        }), 503
+    return None
 
 @app.route('/task', methods=['POST'])
 def submit_task():
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
     data = request.get_json()
     task = data.get('task')
     if not task:
         return jsonify({'error': 'No task provided'}), 400
     
-    result = coordinator.execute_task(task)
-    return jsonify(result)
+    try:
+        result = coordinator.execute_task(task)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error executing task: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'message': 'Failed to execute task'
+        }), 500
 
 @app.route('/status', methods=['GET'])
 def get_status():
-    # Check if any LLM providers are configured
-    llm_providers = coordinator.llm_service.list_providers()
-    providers_info = [p["name"] for p in llm_providers]
+    """Get system status and initialization status"""
+    # Basic status information that doesn't require the coordinator
+    status_info = {
+        'status': 'initializing' if coordinator is None else 'running',
+        'available_features': available_features
+    }
     
-    return jsonify({
-        'status': 'running',
-        'llm_providers': providers_info
-    })
+    # Add more details if coordinator is available
+    if coordinator is not None and hasattr(coordinator, 'llm_service') and coordinator.llm_service:
+        try:
+            llm_providers = coordinator.llm_service.list_providers()
+            providers_info = [p["name"] for p in llm_providers]
+            status_info['llm_providers'] = providers_info
+        except Exception as e:
+            logger.error(f"Error getting LLM providers: {e}")
+            status_info['llm_providers_error'] = str(e)
+    
+    return jsonify(status_info)
 
 @app.route('/llm/providers', methods=['GET'])
 def get_llm_providers():
     """Get all available LLM providers with capabilities"""
-    providers = coordinator.llm_service.list_providers()
-    return jsonify({'providers': providers})
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    try:
+        providers = coordinator.llm_service.list_providers()
+        return jsonify({'providers': providers})
+    except Exception as e:
+        logger.error(f"Error getting LLM providers: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'message': 'Failed to get LLM providers'
+        }), 500
 
 @app.route('/llm/recommendations', methods=['GET'])
 def get_llm_recommendations():
     """Get current LLM recommendations for agents and tools"""
-    recommendations = coordinator.get_provider_recommendations()
-    return jsonify(recommendations)
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    try:
+        recommendations = coordinator.get_provider_recommendations()
+        return jsonify(recommendations)
+    except Exception as e:
+        logger.error(f"Error getting LLM recommendations: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'message': 'Failed to get LLM recommendations'
+        }), 500
 
 @app.route('/llm/preference', methods=['POST'])
 def set_llm_preference():
     """Set LLM preference for a specific agent or tool"""
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
     data = request.get_json()
     entity_type = data.get('entity_type')  # 'agent' or 'tool'
     entity_name = data.get('entity_name')  # e.g., 'planner', 'executor', 'web_browser'
@@ -74,26 +177,65 @@ def set_llm_preference():
 @app.route('/memory', methods=['GET'])
 def list_memory_namespaces():
     """List all memory namespaces"""
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    # Check if memory tool is available
+    if 'memory' not in coordinator.tools or not coordinator.tools['memory']:
+        return jsonify({
+            'status': 'error',
+            'error': 'Memory tool not available',
+            'message': 'Memory tool is not initialized'
+        }), 503
+        
     try:
         namespaces = coordinator.tools['memory'].list_namespaces()
         return jsonify({'namespaces': namespaces})
     except Exception as e:
         logger.error(f"Error listing memory namespaces: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 @app.route('/memory/<namespace>', methods=['GET'])
 def get_memories(namespace):
     """Get all memories in a namespace"""
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    # Check if memory tool is available
+    if 'memory' not in coordinator.tools or not coordinator.tools['memory']:
+        return jsonify({
+            'status': 'error',
+            'error': 'Memory tool not available',
+            'message': 'Memory tool is not initialized'
+        }), 503
+        
     try:
         memories = coordinator.tools['memory'].get_all(namespace)
         return jsonify({'memories': memories})
     except Exception as e:
         logger.error(f"Error getting memories: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 @app.route('/memory/<namespace>/search', methods=['GET'])
 def search_memories(namespace):
     """Search memories in a namespace"""
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    # Check if memory tool is available
+    if 'memory' not in coordinator.tools or not coordinator.tools['memory']:
+        return jsonify({
+            'status': 'error',
+            'error': 'Memory tool not available',
+            'message': 'Memory tool is not initialized'
+        }), 503
+        
     query = request.args.get('query')
     if not query:
         return jsonify({'error': 'No query provided'}), 400
@@ -103,11 +245,24 @@ def search_memories(namespace):
         return jsonify({'results': results})
     except Exception as e:
         logger.error(f"Error searching memories: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 @app.route('/memory/<namespace>', methods=['POST'])
 def store_memory(namespace):
     """Store a memory in a namespace"""
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    # Check if memory tool is available
+    if 'memory' not in coordinator.tools or not coordinator.tools['memory']:
+        return jsonify({
+            'status': 'error',
+            'error': 'Memory tool not available',
+            'message': 'Memory tool is not initialized'
+        }), 503
+        
     data = request.get_json()
     content = data.get('content')
     metadata = data.get('metadata')
@@ -126,7 +281,7 @@ def store_memory(namespace):
         return jsonify({'status': 'success', 'memory': memory})
     except Exception as e:
         logger.error(f"Error storing memory: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 @app.route('/memory/<namespace>/<memory_id>', methods=['GET'])
 def get_memory(namespace, memory_id):
@@ -569,7 +724,29 @@ def initialize_backend():
         logger.error(f"Error initializing backend: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/health', methods=['GET'])
+def api_health():
+    """Health check endpoint for the API"""
+    return jsonify({
+        'status': 'ok',
+        'coordinator_available': coordinator is not None,
+        'available_features': available_features
+    })
+
 if __name__ == '__main__':
     # Configure and initialize the LLM providers based on environment variables
     port = int(os.environ.get('API_PORT', 5000))
+    
+    # Log the initialization status
+    if coordinator is None:
+        logger.warning("Starting API server with coordinator unavailable - limited functionality")
+        for module, error in available_features.items():
+            if isinstance(error, dict):
+                for submodule, status in error.items():
+                    logger.info(f"  - {module}.{submodule}: {'Available' if status else 'Unavailable'}")
+            else:
+                logger.info(f"  - {module}: {'Available' if error else 'Unavailable'}")
+    else:
+        logger.info("Starting API server with full functionality")
+        
     app.run(host='0.0.0.0', port=port)
