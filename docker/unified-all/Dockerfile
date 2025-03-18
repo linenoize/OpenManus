@@ -1,21 +1,31 @@
 # Multi-stage build for OpenManus
-# Stage 1: Simplified frontend setup - no frontend build for now
+# Stage 1: Build Next.js frontend
 FROM node:20-slim AS frontend-builder
 
 WORKDIR /app
 
-# Create minimal structure to satisfy later COPY commands
-RUN mkdir -p .next/static public node_modules
-# Create dummy package.json
-RUN echo '{"name":"openmanus","version":"0.1.0","private":true}' > package.json
+# Copy Next.js configuration and dependencies
+COPY package.json package-lock.json* ./
+COPY next.config.js ./
+RUN npm ci
+
+# Copy frontend source code
+COPY pages ./pages
+COPY public ./public
+COPY styles ./styles
+COPY components ./components
+
+# Build Next.js for production
+RUN npm run build
 
 # Stage 2: Python dependencies
 FROM python:3.9-slim AS python-deps
 
 WORKDIR /app
 
-# Install minimal Python dependencies instead of full requirements
-RUN pip install --no-cache-dir flask requests python-dotenv
+# Install Python dependencies from requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 3: Final runtime image
 FROM python:3.9-slim
