@@ -23,17 +23,20 @@ FROM python:3.9-slim AS python-deps
 
 WORKDIR /app
 
-# Install minimal Python dependencies for testing
-RUN pip install --no-cache-dir flask requests python-dotenv
+# Install Python dependencies for testing
+RUN pip install --no-cache-dir flask requests python-dotenv nltk
 
 # Stage 3: Final runtime image
 FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install only necessary production dependencies
+# Install necessary production dependencies
 RUN apt-get update && apt-get -y install --no-install-recommends \
     nginx \
+    nodejs \
+    npm \
+    procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
