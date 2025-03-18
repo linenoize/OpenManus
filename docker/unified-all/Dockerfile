@@ -25,7 +25,7 @@ WORKDIR /app
 
 # Install Python dependencies for testing
 RUN pip install --no-cache-dir flask requests python-dotenv nltk numpy pandas matplotlib \
-    sentence-transformers faiss-cpu Pillow PyPDF2 && \
+    sentence-transformers faiss-cpu chromadb pymilvus Pillow PyPDF2 && \
     # Pre-download NLTK data to avoid permission issues
     python -c "import nltk; nltk.download('punkt', download_dir='/usr/local/share/nltk_data')"
 
@@ -68,9 +68,17 @@ RUN chmod +x ./start.sh
 # Expose only port 80 for the nginx proxy
 EXPOSE 80
 
+# Create data directories with proper permissions
+RUN mkdir -p /app/data/files/local /app/data/files/git \
+    /app/data/vectors/faiss /app/data/vectors/chroma /app/data/vectors/milvus
+
 # Set default non-root user for security
 RUN groupadd -r openmanus && useradd -r -g openmanus openmanus
 RUN chown -R openmanus:openmanus /app /var/log/nginx /var/lib/nginx
+
+# Ensure data directories have proper permissions
+RUN chmod -R 755 /app/data
+
 USER openmanus
 
 # Start all services

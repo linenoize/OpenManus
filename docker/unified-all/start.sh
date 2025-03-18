@@ -15,13 +15,18 @@ touch /var/log/nginx/error.log
 echo "Ensuring data directories exist with proper permissions..."
 mkdir -p /app/data/files/local
 mkdir -p /app/data/files/git
+mkdir -p /app/data/vectors/faiss
+mkdir -p /app/data/vectors/chroma
+mkdir -p /app/data/vectors/milvus
 
 # Check if we have permission to write to data directories
-if [ ! -w "/app/data/files/local" ] || [ ! -w "/app/data/files/git" ]; then
+if [ ! -w "/app/data/files/local" ] || [ ! -w "/app/data/files/git" ] || \
+   [ ! -w "/app/data/vectors/faiss" ] || [ ! -w "/app/data/vectors/chroma" ] || [ ! -w "/app/data/vectors/milvus" ]; then
     echo "WARNING: Cannot write to data directories. File operations may fail."
     echo "Current permissions:"
     ls -la /app/data
     ls -la /app/data/files
+    ls -la /app/data/vectors
 else
     echo "Data directories are writable."
 fi

@@ -33,7 +33,8 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies for testing
-RUN pip install --no-cache-dir flask requests python-dotenv nltk numpy
+RUN pip install --no-cache-dir flask requests python-dotenv nltk numpy pandas matplotlib \
+    sentence-transformers faiss-cpu chromadb Pillow PyPDF2 pymilvus
 
 # Copy the built Next.js app from the frontend builder
 COPY --from=frontend-builder /app/.next ./.next
@@ -57,7 +58,8 @@ RUN chmod +x ./start.sh
 EXPOSE 80
 
 # Create data directories with proper permissions
-RUN mkdir -p /app/data/files/local /app/data/files/git
+RUN mkdir -p /app/data/files/local /app/data/files/git \
+    /app/data/vectors/faiss /app/data/vectors/chroma /app/data/vectors/milvus
 
 # Set default non-root user for security
 RUN groupadd -r openmanus && useradd -r -g openmanus openmanus

@@ -6,6 +6,9 @@
 echo "Creating data directories..."
 mkdir -p data/files/local
 mkdir -p data/files/git
+mkdir -p data/vectors/faiss
+mkdir -p data/vectors/chroma
+mkdir -p data/vectors/milvus
 
 # Set permissions (make writable for all users)
 echo "Setting permissions..."
@@ -20,6 +23,10 @@ This directory contains data files used by OpenManus:
 - \`files/\`: Storage location for user files
   - \`local/\`: Local storage backend
   - \`git/\`: Git-backed storage backend
+- \`vectors/\`: Storage location for vector database backends
+  - \`faiss/\`: FAISS vector database backend
+  - \`chroma/\`: ChromaDB vector database backend 
+  - \`milvus/\`: Milvus vector database backend
 EOF
 
 echo "Done! Data directories created with proper permissions."
