@@ -70,6 +70,11 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 - [x] Create architecture diagrams
 - [x] Add developer getting started guide
 - [x] Document configuration options for all tools
+- [x] Create unified configuration system
+  - [x] Consolidate all settings into .env file
+  - [x] Create Config class for centralized configuration management
+  - [x] Update documentation to reflect new configuration approach
+  - [x] Ensure environment variables override config files
 
 ## Future Enhancements
 

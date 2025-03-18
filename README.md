@@ -73,7 +73,43 @@ This will launch:
 
 The unified container option simplifies deployment by running all services in a single container with Nginx as a reverse proxy (exposed on port 80).
 
-### 4. Test the System
+### 4. Configure the Environment
+OpenManus uses a centralized configuration approach with environment variables stored in a `.env` file:
+
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit the `.env` file to configure:
+   - LLM provider API keys (OpenAI, Anthropic)
+   - Storage backend settings
+   - Vector database options
+   - Memory and tool settings
+
+Key configuration sections:
+```bash
+# LLM Provider Settings
+OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Default LLM preferences
+DEFAULT_PLANNER_LLM=gpt4o
+DEFAULT_EXECUTOR_LLM=claude
+DEFAULT_TOOLAGENT_LLM=local
+
+# Vector Database settings
+VECTOR_DB_BACKEND=faiss  # or chroma, milvus
+
+# Storage preferences by file type
+OPENMANUS_STORAGE_TEMP=local
+OPENMANUS_STORAGE_CODE=git
+OPENMANUS_STORAGE_DOCUMENT=google_drive
+```
+
+For full configuration documentation, see `docs/configuration.md`.
+
+### 5. Test the System
 Once running, you can interact with OpenManus via:
 - CLI: Use the provided Python client
 - API: Send requests to http://localhost/api (when using unified container) or http://localhost:5000 (standard setup)

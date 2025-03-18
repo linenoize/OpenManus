@@ -14,6 +14,9 @@ from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Dict, List, BinaryIO, Optional, Union, Tuple, Any, Set, Iterator
 
+# Import config system
+from src.config import load_config, Config
+
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
     
@@ -1674,63 +1677,28 @@ class FileManagerTool:
     Provides a unified interface for file operations with multiple storage options.
     """
     
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, config_obj: Config = None):
         """
         Initialize the file manager tool with different storage backends.
         
         Args:
-            config_path: Path to the configuration file. If None, uses default settings.
+            config_path: Path to the configuration file. If None, uses environment variables or default settings.
+            config_obj: Config object. If provided, this takes precedence over config_path.
         """
-        # Default configuration
-        self.config = {
-            "backends": {
-                "local": {
-                    "enabled": True,
-                    "base_path": "data/files/local",
-                    "requires_auth": False
-                },
-                "git": {
-                    "enabled": True,
-                    "base_path": "data/files/git",
-                    "requires_auth": False,
-                    "user_name": "OpenManus",
-                    "user_email": "openmanus@example.com"
-                },
-                "google_drive": {
-                    "enabled": False,
-                    "requires_auth": True,
-                    "credentials_path": None,
-                    "root_folder": "OpenManus"
-                },
-                "onedrive": {
-                    "enabled": False,
-                    "requires_auth": True,
-                    "credentials_path": None,
-                    "root_folder": "OpenManus"
-                }
-            },
-            "storage_preferences": {
-                "temp": "local",
-                "code": "git",
-                "knowledge": "git",
-                "document": "git",
-                "image": "local",
-                "video": "local",
-                "audio": "local",
-                "general": "local"
-            }
-        }
-        
-        # Load configuration from file if provided
-        if config_path and os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    loaded_config = json.load(f)
-                    # Merge the loaded config with the default config
-                    self._merge_config(loaded_config)
-            except Exception as e:
-                print(f"Error loading configuration from {config_path}: {e}")
-                print("Using default configuration")
+        # First try to get the configuration from the provided Config object
+        if config_obj:
+            self.config = config_obj.get_file_manager_config()
+        else:
+            # Get the system-wide config object
+            system_config = load_config()
+            
+            # If config_path is provided, use it (with env var override)
+            if config_path and os.path.exists(config_path):
+                # Store the path for potential reference
+                os.environ["OPENMANUS_FILE_MANAGER_CONFIG_PATH"] = config_path
+            
+            # Get file manager configuration from env vars and/or config file
+            self.config = system_config.get_file_manager_config()
         
         # Initialize storage backends based on configuration
         self.storage_backends = {}
