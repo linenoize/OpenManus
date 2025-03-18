@@ -42,6 +42,40 @@ class TaskCoordinator:
             print("Install required dependencies with: pip install faiss-cpu sentence-transformers")
             vector_db = None
             
+        # Import StructuredDataTool
+        try:
+            from src.tools.structured_data.structured_data_tool import StructuredDataTool
+            structured_data = StructuredDataTool()
+        except ImportError as e:
+            print(f"StructuredDataTool could not be initialized: {e}")
+            print("Install required dependencies with: pip install pandas matplotlib scipy")
+            structured_data = None
+            
+        # Import MetadataExtractorTool
+        try:
+            from src.tools.metadata_extractor import MetadataExtractorTool
+            metadata_extractor = MetadataExtractorTool()
+        except ImportError as e:
+            print(f"MetadataExtractorTool could not be initialized: {e}")
+            metadata_extractor = None
+            
+        # Import TaskDecompositionTool
+        try:
+            from src.tools.task_decomposition import TaskDecompositionTool
+            task_decomposition = TaskDecompositionTool()
+        except ImportError as e:
+            print(f"TaskDecompositionTool could not be initialized: {e}")
+            task_decomposition = None
+            
+        # Import DocumentProcessingTool
+        try:
+            from src.tools.document_processing import DocumentProcessingTool
+            document_processing = DocumentProcessingTool()
+        except ImportError as e:
+            print(f"DocumentProcessingTool could not be initialized: {e}")
+            print("Install required dependencies with: pip install PyPDF2 python-docx")
+            document_processing = None
+            
         tools = {
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
@@ -51,9 +85,21 @@ class TaskCoordinator:
             'llm_service': self.llm_service
         }
         
-        # Add vector_db if available
+        # Add tools if available
         if vector_db:
             tools['vector_db'] = vector_db
+            
+        if structured_data:
+            tools['structured_data'] = structured_data
+            
+        if metadata_extractor:
+            tools['metadata_extractor'] = metadata_extractor
+            
+        if task_decomposition:
+            tools['task_decomposition'] = task_decomposition
+            
+        if document_processing:
+            tools['document_processing'] = document_processing
             
         return tools
     

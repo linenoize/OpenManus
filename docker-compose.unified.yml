@@ -13,6 +13,11 @@ services:
       - PYTHONPATH=/app
       - FLASK_APP=src/server.py
       - FLASK_ENV=development
+      - FRONTEND_PORT=3000
+      - API_PORT=5000
+      - TOOLS_PORT=5001
+      - API_HOST=localhost
+      - API_PATH=api
     volumes:
       - ./src:/app/src
       - ./data:/app/data

@@ -76,8 +76,8 @@ The unified container option simplifies deployment by running all services in a 
 ### 4. Test the System
 Once running, you can interact with OpenManus via:
 - CLI: Use the provided Python client
-- API: Send requests to http://localhost:5000 (see API docs below)
-- Web UI: Access http://localhost:3000
+- API: Send requests to http://localhost/api (when using unified container) or http://localhost:5000 (standard setup)
+- Web UI: Access http://localhost (when using unified container) or http://localhost:3000 (standard setup)
 
 Example CLI commands:
 ```bash
@@ -152,7 +152,7 @@ OpenManus/
 cp .env.example .env
 ```
 
-2. **Edit the `.env` file to configure your LLM providers:**
+2. **Edit the `.env` file to configure your LLM providers and port settings:**
 ```bash
 # OpenAI settings
 OPENAI_API_KEY=your_openai_api_key_here
@@ -163,6 +163,15 @@ ANTHROPIC_API_KEY=your_anthropic_api_key_here
 # Local LLM settings (optional)
 ENABLE_LOCAL_LLM=true
 LOCAL_LLM_PATH=models/llama3
+
+# Port configuration (used in standard setup)
+FRONTEND_PORT=3000
+API_PORT=5000
+TOOLS_PORT=5001
+
+# API client configuration
+API_HOST=localhost
+API_PATH=api  # Used in unified setup, leave empty for standard setup
 ```
 
 3. **Edit the `docker-compose.yml` file to customize:**
@@ -193,7 +202,7 @@ services:
 ```
 
 ### API Documentation
-The agent server exposes a REST API at http://localhost:5000. Key endpoints:
+The agent server exposes a REST API at http://localhost/api (when using unified container) or http://localhost:5000 (standard setup). Key endpoints:
 
 **POST /task**: Submit a task for execution.
 ```json
@@ -364,11 +373,11 @@ Please read `CONTRIBUTING.md` for guidelines.
 - Integrate advanced NLP models (e.g., LLaMA, Grok)
 - Enhance toolset with:
   - Real-time web scraping and visualization
-  - Document processing capabilities
+  - ✅ Document processing capabilities 
   - Advanced RAG (Retrieval Augmented Generation) capabilities
-  - Structured data tool for CSV/JSON/database operations
-  - Metadata extraction tool for various file types
-  - Task decomposition tool for complex requests
+  - ✅ Structured data tool for CSV/JSON/database operations
+  - ✅ Metadata extraction tool for various file types
+  - ✅ Task decomposition tool for complex requests
 - Release v1.0 with stable task execution
 
 ### Inspiration

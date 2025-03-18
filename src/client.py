@@ -2,8 +2,15 @@ import argparse
 import requests
 import json
 import sys
+import os
 
-def submit_task(task, host="http://localhost:5000"):
+def submit_task(task, host=None):
+    # Use environment variable if host not provided
+    if host is None:
+        api_host = os.environ.get('API_HOST', 'localhost')
+        api_port = os.environ.get('API_PORT', '5000')
+        api_path = os.environ.get('API_PATH', '')
+        host = f"http://{api_host}:{api_port}/{api_path}"
     """Submit a task to the agent server."""
     try:
         response = requests.post(f"{host}/task", json={"task": task})
@@ -12,7 +19,13 @@ def submit_task(task, host="http://localhost:5000"):
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
 
-def get_status(host="http://localhost:5000"):
+def get_status(host=None):
+    # Use environment variable if host not provided
+    if host is None:
+        api_host = os.environ.get('API_HOST', 'localhost')
+        api_port = os.environ.get('API_PORT', '5000')
+        api_path = os.environ.get('API_PATH', '')
+        host = f"http://{api_host}:{api_port}/{api_path}"
     """Get server status and LLM provider information."""
     try:
         response = requests.get(f"{host}/status")

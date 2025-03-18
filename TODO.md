@@ -95,18 +95,18 @@ This file tracks planned improvements and unfinished features in the OpenManus p
     - [x] Extract metadata from various file types
     - [x] Generate summaries from content
     - [x] Create searchable indices
-  - [ ] Task Decomposition Tool
-    - [ ] Break complex tasks into smaller subtasks
-    - [ ] Track task dependencies and status
-    - [ ] Implement priority-based execution
+  - [x] Task Decomposition Tool
+    - [x] Break complex tasks into smaller subtasks
+    - [x] Track task dependencies and status
+    - [x] Implement priority-based execution
   - [ ] Social Media API Tool
     - [ ] Reddit integration for data collection
     - [ ] Telegram, Discord, and Slack for interactions
     - [ ] Implement rate limiting and error handling
-  - [ ] Document Processing Tool
-    - [ ] PDF parsing and analysis
-    - [ ] Word document processing
-    - [ ] Extract structured data from documents
+  - [x] Document Processing Tool
+    - [x] PDF parsing and analysis
+    - [x] Word document processing
+    - [x] Extract structured data from documents
   - [ ] Image and Video Analysis Tool
     - [ ] Extract text from images (OCR)
     - [ ] Generate image descriptions

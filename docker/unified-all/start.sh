@@ -11,19 +11,27 @@ mkdir -p /var/log/nginx
 touch /var/log/nginx/access.log
 touch /var/log/nginx/error.log
 
+# Get port configurations from environment variables or use defaults
+FRONTEND_PORT=${FRONTEND_PORT:-3000}
+API_PORT=${API_PORT:-5000}
+TOOLS_PORT=${TOOLS_PORT:-5001}
+
+# Export ports for child processes
+export FRONTEND_PORT API_PORT TOOLS_PORT
+
 # Start Next.js frontend
-echo "Starting Next.js frontend..."
-npm start &
+echo "Starting Next.js frontend on port $FRONTEND_PORT..."
+PORT=$FRONTEND_PORT npm start &
 NEXT_PID=$!
 
 # Start Flask backend server
-echo "Starting Flask backend server..."
-FLASK_APP=src/server.py FLASK_ENV=development PYTHONPATH=/app:/app/src python3 -m flask run --host=0.0.0.0 &
+echo "Starting Flask backend server on port $API_PORT..."
+FLASK_APP=src/server.py FLASK_ENV=development PYTHONPATH=/app:/app/src API_PORT=$API_PORT python3 -m flask run --host=0.0.0.0 &
 FLASK_PID=$!
 
 # Start tools server
-echo "Starting tools server..."
-PYTHONPATH=/app:/app/src python3 src/tools/server.py &
+echo "Starting tools server on port $TOOLS_PORT..."
+PYTHONPATH=/app:/app/src TOOLS_PORT=$TOOLS_PORT python3 src/tools/server.py &
 TOOLS_PID=$!
 
 # Give the services a moment to start
