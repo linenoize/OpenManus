@@ -54,7 +54,8 @@ fi
 
 # Start nginx as our reverse proxy
 echo "Starting nginx..."
-nginx -g "daemon off;" &
+mkdir -p /tmp/nginx
+nginx -g "daemon off; pid /tmp/nginx/nginx.pid;" &
 NGINX_PID=$!
 
 # Function to handle termination

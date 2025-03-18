@@ -68,6 +68,11 @@ export default function Home() {
             <h2>Dashboard &rarr;</h2>
             <p>Access the system dashboard and controls.</p>
           </a>
+
+          <a href="/files" className={styles.card}>
+            <h2>File Manager &rarr;</h2>
+            <p>Manage and organize your files and documents.</p>
+          </a>
         </div>
       </main>
 
