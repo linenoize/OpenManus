@@ -5,9 +5,9 @@ FROM node:20-slim AS frontend-builder
 WORKDIR /app
 
 # Copy Next.js configuration and dependencies
-COPY package.json package-lock.json* ./
+COPY package.json ./
 COPY next.config.js ./
-RUN npm ci
+RUN npm install
 
 # Copy frontend source code
 COPY pages ./pages
