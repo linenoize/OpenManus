@@ -1,4 +1,8 @@
+import logging
 from src.tools.llm_service import initialize_llm_service
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class TaskCoordinator:
     """Coordinates tasks between multiple agents and tools."""
@@ -38,8 +42,8 @@ class TaskCoordinator:
             from src.tools.vector_db_tool import VectorDBTool
             vector_db = VectorDBTool()
         except ImportError as e:
-            print(f"VectorDBTool could not be initialized: {e}")
-            print("Install required dependencies with: pip install faiss-cpu sentence-transformers")
+            logger.warning(f"VectorDBTool could not be initialized: {e}")
+            logger.info("Install required dependencies with: pip install faiss-cpu sentence-transformers")
             vector_db = None
             
         # Import StructuredDataTool
@@ -47,8 +51,8 @@ class TaskCoordinator:
             from src.tools.structured_data.structured_data_tool import StructuredDataTool
             structured_data = StructuredDataTool()
         except ImportError as e:
-            print(f"StructuredDataTool could not be initialized: {e}")
-            print("Install required dependencies with: pip install pandas matplotlib scipy")
+            logger.warning(f"StructuredDataTool could not be initialized: {e}")
+            logger.info("Install required dependencies with: pip install pandas matplotlib scipy")
             structured_data = None
             
         # Import MetadataExtractorTool
@@ -56,7 +60,7 @@ class TaskCoordinator:
             from src.tools.metadata_extractor import MetadataExtractorTool
             metadata_extractor = MetadataExtractorTool()
         except ImportError as e:
-            print(f"MetadataExtractorTool could not be initialized: {e}")
+            logger.warning(f"MetadataExtractorTool could not be initialized: {e}")
             metadata_extractor = None
             
         # Import TaskDecompositionTool
@@ -64,7 +68,7 @@ class TaskCoordinator:
             from src.tools.task_decomposition import TaskDecompositionTool
             task_decomposition = TaskDecompositionTool()
         except ImportError as e:
-            print(f"TaskDecompositionTool could not be initialized: {e}")
+            logger.warning(f"TaskDecompositionTool could not be initialized: {e}")
             task_decomposition = None
             
         # Import DocumentProcessingTool
@@ -72,8 +76,8 @@ class TaskCoordinator:
             from src.tools.document_processing import DocumentProcessingTool
             document_processing = DocumentProcessingTool()
         except ImportError as e:
-            print(f"DocumentProcessingTool could not be initialized: {e}")
-            print("Install required dependencies with: pip install PyPDF2 python-docx")
+            logger.warning(f"DocumentProcessingTool could not be initialized: {e}")
+            logger.info("Install required dependencies with: pip install PyPDF2 python-docx")
             document_processing = None
             
         tools = {
@@ -145,7 +149,7 @@ class TaskCoordinator:
         """
         try:
             # Log task start
-            print(f"Starting task execution: {task_description[:50]}...")
+            logger.info(f"Starting task execution: {task_description[:50]}...")
             
             # Generate execution plan
             try:
@@ -153,7 +157,7 @@ class TaskCoordinator:
                 if not plan or not isinstance(plan, dict) or "steps" not in plan:
                     raise ValueError("Invalid plan format returned by planner agent")
             except Exception as e:
-                print(f"Error during planning phase: {str(e)}")
+                logger.error(f"Error during planning phase: {str(e)}", exc_info=True)
                 return {
                     "status": "error",
                     "phase": "planning",
@@ -165,7 +169,7 @@ class TaskCoordinator:
             try:
                 result = self.agents['executor'].execute_plan(plan, self.agents, self.tools)
             except Exception as e:
-                print(f"Error during execution phase: {str(e)}")
+                logger.error(f"Error during execution phase: {str(e)}", exc_info=True)
                 return {
                     "status": "error",
                     "phase": "execution",
@@ -182,7 +186,7 @@ class TaskCoordinator:
             }
         except Exception as e:
             # Catch-all for any unhandled exceptions
-            print(f"Unexpected error in task execution: {str(e)}")
+            logger.error(f"Unexpected error in task execution: {str(e)}", exc_info=True)
             return {
                 "status": "error",
                 "phase": "unknown",
@@ -316,7 +320,7 @@ class PlannerAgent:
                     # Fallback to default plan if parsing fails
                     pass
             except Exception as e:
-                print(f"Error generating plan with LLM: {e}")
+                logger.error(f"Error generating plan with LLM: {e}", exc_info=True)
         
         # Fallback plan if LLM is not available or fails
         # Include memory and file_manager operations to demonstrate basic functionality
@@ -366,7 +370,7 @@ class ExecutionAgent:
                 
                 # Log step execution
                 step_desc = f"Executing step {step_num}/{len(plan['steps'])}"
-                print(f"{step_desc}: {str(step)[:100]}...")
+                logger.info(f"{step_desc}: {str(step)[:100]}...")
                 
                 # Extract step components with validation
                 if 'agent' not in step:
@@ -399,7 +403,7 @@ class ExecutionAgent:
                         step_result = tool_result
                     except Exception as tool_error:
                         error_msg = f"Error in step {step_num} using tool '{tool_name}': {str(tool_error)}"
-                        print(error_msg)
+                        logger.error(error_msg, exc_info=True)
                         results.append(error_msg)
                         continue
                     
@@ -413,7 +417,7 @@ class ExecutionAgent:
                             )
                             results.append(f"Tool '{tool_name}' used with args {tool_args}. Result summary: {summary}")
                         except Exception as e:
-                            print(f"Warning: Error summarizing result with LLM: {e}")
+                            logger.warning(f"Error summarizing result with LLM: {e}")
                             # Fallback to truncated result if summarization fails
                             trunc_result = tool_result[:500] + "..." if len(tool_result) > 500 else tool_result
                             results.append(f"Tool '{tool_name}' used with args {tool_args}. Result: {trunc_result}")
@@ -430,7 +434,7 @@ class ExecutionAgent:
             
             except Exception as step_error:
                 error_msg = f"Error processing step {step_num}: {str(step_error)}"
-                print(error_msg)
+                logger.error(error_msg, exc_info=True)
                 results.append(error_msg)
         
         # Combine all results
@@ -520,16 +524,16 @@ class ToolAgent:
             return f"Error accessing tool '{tool_name}': {str(e)}"
             
         # Log tool usage
-        print(f"Using tool: {tool_name} with args: {tool_args}")
+        logger.info(f"Using tool: {tool_name} with args: {tool_args}")
         
         # If using LLM with tools, get preferred provider
         if self.llm_service and tool_name in self.llm_service.tool_preferences:
             try:
                 provider = self.llm_service.get_preferred_provider(tool_name, "tool")
                 provider_type = provider.capabilities["type"]
-                print(f"Using {provider_type} for tool: {tool_name}")
+                logger.info(f"Using {provider_type} for tool: {tool_name}")
             except Exception as e:
-                print(f"Warning: Error getting preferred provider: {str(e)}")
+                logger.warning(f"Error getting preferred provider: {str(e)}")
                 
         # Execute based on tool type
         try:
@@ -590,7 +594,7 @@ class ToolAgent:
                 
         except Exception as e:
             error_msg = f"Error executing tool '{tool_name}': {str(e)}"
-            print(error_msg)
+            logger.error(error_msg, exc_info=True)
             return error_msg
     
     def _check_missing_params(self, args, required_params):

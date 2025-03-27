@@ -1,10 +1,14 @@
 import os
 import json
 import nltk
+import logging
 from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 import textwrap
 from collections import defaultdict
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Set nltk data path to look in system directory first
 nltk.data.path = ['/usr/local/share/nltk_data'] + nltk.data.path
@@ -66,10 +70,10 @@ class MemoryTool:
                     base_path=vector_db_path,
                     model_name=model_name
                 )
-                print(f"Vector-based memory enabled with model: {model_name}")
+                logger.info(f"Vector-based memory enabled with model: {model_name}")
             except Exception as e:
-                print(f"Warning: Could not initialize vector database: {e}")
-                print("Falling back to text-based search")
+                logger.warning(f"Could not initialize vector database: {e}")
+                logger.info("Falling back to text-based search")
                 self.use_vectors = False
     
     def store(self, content: str, metadata: Optional[Dict[str, Any]] = None, 

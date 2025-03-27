@@ -1,7 +1,11 @@
 import os
 import json
+import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers"""
@@ -241,18 +245,18 @@ def initialize_llm_service():
             model_path = os.environ.get("LOCAL_LLM_PATH", "models/mistral-7b")
             service.add_provider("local", LocalLLM(model_path))
     except Exception as e:
-        print(f"Failed to initialize local LLM: {e}")
+        logger.warning(f"Failed to initialize local LLM: {e}")
         
     try:
         if os.environ.get("OPENAI_API_KEY"):
             service.add_provider("gpt4o", OpenAIProvider(model="gpt-4o"))
     except Exception as e:
-        print(f"Failed to initialize OpenAI provider: {e}")
+        logger.warning(f"Failed to initialize OpenAI provider: {e}")
         
     try:
         if os.environ.get("ANTHROPIC_API_KEY"):
             service.add_provider("claude", ClaudeProvider())
     except Exception as e:
-        print(f"Failed to initialize Claude provider: {e}")
+        logger.warning(f"Failed to initialize Claude provider: {e}")
         
     return service
