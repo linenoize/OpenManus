@@ -10,12 +10,28 @@ import gzip
 import pathlib
 import mimetypes
 import subprocess
+import logging
 from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Dict, List, BinaryIO, Optional, Union, Tuple, Any, Set, Iterator
 
 # Import config system
 from src.config import load_config, Config
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+class FileManagerError(Exception):
+    """Base exception for all file manager errors."""
+    pass
+
+class StorageBackendError(FileManagerError):
+    """Exception raised for errors in storage backends."""
+    pass
+
+class FileOperationError(FileManagerError):
+    """Exception raised for errors during file operations."""
+    pass
 
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
@@ -105,10 +121,10 @@ class LocalStorageBackend(StorageBackend):
         self.base_path = pathlib.Path(base_path)
         try:
             os.makedirs(self.base_path, exist_ok=True)
-            print(f"Successfully initialized storage at {self.base_path}")
+            logger.info(f"Successfully initialized storage at {self.base_path}")
         except PermissionError:
-            print(f"WARNING: Permission denied creating directory {self.base_path}")
-            print(f"Will attempt to use existing directories or fallback to temporary storage")
+            logger.warning(f"Permission denied creating directory {self.base_path}")
+            logger.warning(f"Will attempt to use existing directories or fallback to temporary storage")
             # Try to use a temporary directory as fallback
             import tempfile
             temp_dir = tempfile.gettempdir()
@@ -116,17 +132,17 @@ class LocalStorageBackend(StorageBackend):
             try:
                 os.makedirs(temp_storage_path, exist_ok=True)
                 self.base_path = pathlib.Path(temp_storage_path)
-                print(f"Using fallback storage location: {self.base_path}")
+                logger.info(f"Using fallback storage location: {self.base_path}")
             except Exception as e:
-                print(f"ERROR: Failed to create fallback storage: {e}")
+                logger.error(f"Failed to create fallback storage: {e}")
                 # Last resort: use the current directory
                 self.base_path = pathlib.Path('.')
-                print(f"Using current directory as storage location")
+                logger.warning(f"Using current directory as storage location")
         except Exception as e:
-            print(f"ERROR: Failed to initialize storage at {self.base_path}: {e}")
+            logger.error(f"Failed to initialize storage at {self.base_path}: {e}", exc_info=True)
             # Fallback to current directory
             self.base_path = pathlib.Path('.')
-            print(f"Using current directory as storage location")
+            logger.warning(f"Using current directory as storage location")
             
         # Initialize mimetypes
         mimetypes.init()
@@ -1031,7 +1047,7 @@ class GoogleDriveStorageBackend(StorageBackend):
     def _get_or_create_root_folder(self) -> str:
         """Find or create the root folder and return its ID."""
         if not self.service:
-            raise Exception("Google Drive service not initialized")
+            raise StorageBackendError("Google Drive service not initialized")
             
         # Check if root folder exists
         response = self.service.files().list(
@@ -1059,7 +1075,7 @@ class GoogleDriveStorageBackend(StorageBackend):
         Creates intermediate folders if they don't exist.
         """
         if not self.authenticated or not self.service:
-            raise Exception("Google Drive authentication required")
+            raise StorageBackendError("Google Drive authentication required")
             
         if not path or path == '/' or path == '.':
             return self.root_folder_id
@@ -1149,7 +1165,7 @@ class GoogleDriveStorageBackend(StorageBackend):
     def read_file(self, path: str) -> bytes:
         """Read a file from Google Drive."""
         if not self.authenticated or not self.service:
-            raise Exception("Google Drive authentication required")
+            raise StorageBackendError("Google Drive authentication required")
             
         file_id = self._get_file_id(path)
         if not file_id:
