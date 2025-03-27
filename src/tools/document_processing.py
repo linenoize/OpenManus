@@ -1504,6 +1504,378 @@ class DocumentProcessingTool:
             logger.error(f"Error merging documents: {str(e)}")
             return {"error": f"Document merging error: {str(e)}"}
     
+    def _summarize_pdf(self, file_path: str, content: bytes) -> str:
+        """
+        Generate a summary of a PDF document.
+        
+        Args:
+            file_path: Path to the PDF file
+            content: Raw PDF content as bytes
+            
+        Returns:
+            Generated summary as string
+        """
+        try:
+            # Extract text from PDF
+            text = self._extract_text_from_pdf(content)
+            if text.startswith("Error:"):
+                logger.error(f"Error extracting text for summarization: {text}")
+                return f"Could not summarize PDF: {text}"
+                
+            # Extract metadata
+            metadata = self._get_pdf_metadata(content)
+            
+            # Create summary
+            title = metadata.get('title', os.path.basename(file_path))
+            author = metadata.get('author', 'Unknown')
+            page_count = metadata.get('page_count', 0)
+            
+            # Truncate text if too long (basic summarization)
+            MAX_LENGTH = 500
+            if len(text) > MAX_LENGTH:
+                summary_text = text[:MAX_LENGTH] + "..."
+            else:
+                summary_text = text
+                
+            summary = f"PDF Document: {title}\n"
+            summary += f"Author: {author}\n"
+            summary += f"Pages: {page_count}\n\n"
+            summary += f"Content Preview:\n{summary_text}\n\n"
+            
+            # Get document structure if available through advanced analysis
+            if self.enable_advanced_analysis:
+                # Here we would add more sophisticated summarization using
+                # NLP techniques like topic modeling, key phrase extraction, etc.
+                summary += "Document Structure: Basic PDF with text content\n"
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error summarizing PDF: {str(e)}")
+            return f"Error generating PDF summary: {str(e)}"
+
+    def _summarize_image(self, file_path: str, content: bytes) -> str:
+        """
+        Generate a summary of an image, potentially using OCR.
+        
+        Args:
+            file_path: Path to the image file
+            content: Raw image content as bytes
+            
+        Returns:
+            Generated summary as string
+        """
+        try:
+            # Basic image metadata
+            img_type = os.path.splitext(file_path)[1].lower()
+            size_kb = len(content) / 1024
+            
+            summary = f"Image File: {os.path.basename(file_path)}\n"
+            summary += f"Type: {img_type}\n"
+            summary += f"Size: {size_kb:.2f} KB\n\n"
+            
+            # Use OCR if enabled
+            if self.enable_ocr and self._check_handler('ocr'):
+                try:
+                    ocr_result = self._process_image_with_ocr(content)
+                    
+                    if "error" not in ocr_result and ocr_result.get("text"):
+                        text = ocr_result.get("text", "").strip()
+                        if text:
+                            summary += f"OCR Extracted Text:\n{text[:300]}"
+                            if len(text) > 300:
+                                summary += "...\n"
+                    else:
+                        summary += "No text detected in image.\n"
+                        
+                except Exception as ocr_err:
+                    logger.warning(f"OCR failed for image: {str(ocr_err)}")
+                    summary += "OCR processing failed.\n"
+            else:
+                summary += "OCR not enabled. Enable OCR for text extraction from images.\n"
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error summarizing image: {str(e)}")
+            return f"Error generating image summary: {str(e)}"
+            
+    def _extract_pdf_metadata(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """
+        Extract detailed metadata from a PDF file.
+        
+        Args:
+            file_path: Path to the PDF file
+            content: Raw PDF content as bytes
+            
+        Returns:
+            Dictionary with detailed PDF metadata
+        """
+        try:
+            # Get basic metadata using existing method
+            basic_metadata = self._get_pdf_metadata(content)
+            
+            if "error" in basic_metadata:
+                return basic_metadata
+                
+            # Add file system metadata
+            fs_metadata = {
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "file_size": len(content),
+                "file_extension": os.path.splitext(file_path)[1].lower()
+            }
+            
+            if os.path.exists(file_path):
+                fs_metadata.update({
+                    "created_time": datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    "access_time": datetime.fromtimestamp(os.path.getatime(file_path)).isoformat(),
+                })
+                
+            # Combine all metadata
+            result = {**basic_metadata, **fs_metadata}
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error extracting PDF metadata: {str(e)}")
+            return {"error": f"PDF metadata extraction error: {str(e)}"}
+    
+    def _extract_doc_metadata(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """
+        Extract metadata from a DOC file.
+        
+        Args:
+            file_path: Path to the DOC file
+            content: Raw DOC content as bytes
+            
+        Returns:
+            Dictionary with DOC metadata
+        """
+        # Since DOC format is binary and legacy, implementation would require specific libraries
+        # This method would typically use libraries like antiword, textract, or oletools
+        try:
+            # Basic file metadata
+            metadata = {
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "file_size": len(content),
+                "file_extension": ".doc",
+                "format": "Microsoft Word Document (DOC)"
+            }
+            
+            # Add file system metadata if available
+            if os.path.exists(file_path):
+                metadata.update({
+                    "created_time": datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    "access_time": datetime.fromtimestamp(os.path.getatime(file_path)).isoformat(),
+                })
+                
+            # Note about limitation
+            metadata["note"] = "Detailed DOC metadata extraction requires additional libraries."
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Error extracting DOC metadata: {str(e)}")
+            return {"error": f"DOC metadata extraction error: {str(e)}"}
+    
+    def _extract_docx_metadata(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """
+        Extract detailed metadata from a DOCX file.
+        
+        Args:
+            file_path: Path to the DOCX file
+            content: Raw DOCX content as bytes
+            
+        Returns:
+            Dictionary with detailed DOCX metadata
+        """
+        try:
+            # Use existing method to get basic metadata
+            basic_metadata = self._get_docx_metadata(content)
+            
+            if "error" in basic_metadata:
+                return basic_metadata
+                
+            # Add file system metadata
+            fs_metadata = {
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "file_size": len(content),
+                "file_extension": os.path.splitext(file_path)[1].lower()
+            }
+            
+            if os.path.exists(file_path):
+                fs_metadata.update({
+                    "created_time": datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    "access_time": datetime.fromtimestamp(os.path.getatime(file_path)).isoformat(),
+                })
+                
+            # Combine all metadata
+            result = {**basic_metadata, **fs_metadata}
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error extracting DOCX metadata: {str(e)}")
+            return {"error": f"DOCX metadata extraction error: {str(e)}"}
+    
+    def _extract_image_metadata(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """
+        Extract metadata from an image file.
+        
+        Args:
+            file_path: Path to the image file
+            content: Raw image content as bytes
+            
+        Returns:
+            Dictionary with image metadata
+        """
+        try:
+            # Basic image metadata
+            metadata = {
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "file_size": len(content),
+                "file_extension": os.path.splitext(file_path)[1].lower()
+            }
+            
+            # Add file system metadata if available
+            if os.path.exists(file_path):
+                metadata.update({
+                    "created_time": datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    "access_time": datetime.fromtimestamp(os.path.getatime(file_path)).isoformat(),
+                })
+            
+            # Check if we have PIL available for image analysis
+            if self.enable_ocr and self._check_handler('ocr'):
+                Image = self.handlers['ocr']['image_library']
+                
+                # Extract image properties
+                try:
+                    img = Image.open(io.BytesIO(content))
+                    metadata.update({
+                        "width": img.width,
+                        "height": img.height,
+                        "format": img.format,
+                        "mode": img.mode,
+                        "aspect_ratio": round(img.width / img.height, 2) if img.height > 0 else 0
+                    })
+                    
+                    # Extract EXIF data if available
+                    if hasattr(img, "_getexif") and img._getexif():
+                        exif = img._getexif()
+                        exif_data = {}
+                        
+                        # Common EXIF tags
+                        exif_tags = {
+                            271: "make",              # Camera manufacturer
+                            272: "model",             # Camera model
+                            306: "datetime",          # Date and time
+                            33432: "copyright",       # Copyright
+                            36867: "date_taken",      # Date taken
+                            37385: "flash",           # Flash used
+                            37386: "focal_length",    # Focal length
+                            41728: "source_file",     # Source file
+                            41729: "scene_type",      # Scene type
+                        }
+                        
+                        for tag, value in exif.items():
+                            if tag in exif_tags:
+                                exif_data[exif_tags[tag]] = str(value)
+                                
+                        if exif_data:
+                            metadata["exif"] = exif_data
+                except Exception as img_err:
+                    logger.warning(f"Error extracting image properties: {str(img_err)}")
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Error extracting image metadata: {str(e)}")
+            return {"error": f"Image metadata extraction error: {str(e)}"}
+    
+    def _extract_audio_metadata(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """
+        Extract metadata from an audio file.
+        
+        Args:
+            file_path: Path to the audio file
+            content: Raw audio content as bytes
+            
+        Returns:
+            Dictionary with audio metadata
+        """
+        try:
+            # Basic file metadata
+            metadata = {
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "file_size": len(content),
+                "file_extension": os.path.splitext(file_path)[1].lower(),
+                "mime_type": "audio/" + os.path.splitext(file_path)[1].lower().lstrip('.')
+            }
+            
+            # Add file system metadata if available
+            if os.path.exists(file_path):
+                metadata.update({
+                    "created_time": datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    "access_time": datetime.fromtimestamp(os.path.getatime(file_path)).isoformat(),
+                })
+            
+            # Note about additional libraries
+            metadata["note"] = "Detailed audio metadata extraction requires libraries like mutagen or tinytag."
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Error extracting audio metadata: {str(e)}")
+            return {"error": f"Audio metadata extraction error: {str(e)}"}
+    
+    def _extract_video_metadata(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """
+        Extract metadata from a video file.
+        
+        Args:
+            file_path: Path to the video file
+            content: Raw video content as bytes
+            
+        Returns:
+            Dictionary with video metadata
+        """
+        try:
+            # Basic file metadata
+            metadata = {
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "file_size": len(content),
+                "file_extension": os.path.splitext(file_path)[1].lower(),
+                "mime_type": "video/" + os.path.splitext(file_path)[1].lower().lstrip('.')
+            }
+            
+            # Add file system metadata if available
+            if os.path.exists(file_path):
+                metadata.update({
+                    "created_time": datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    "access_time": datetime.fromtimestamp(os.path.getatime(file_path)).isoformat(),
+                })
+            
+            # Note about additional libraries
+            metadata["note"] = "Detailed video metadata extraction requires libraries like ffmpeg-python or moviepy."
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Error extracting video metadata: {str(e)}")
+            return {"error": f"Video metadata extraction error: {str(e)}"}
+    
     def analyze_document(self, file_path: str) -> Dict[str, Any]:
         """
         Perform advanced analysis on a document (structure, content types, etc.)
