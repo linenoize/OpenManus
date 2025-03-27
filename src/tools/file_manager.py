@@ -1,3 +1,7 @@
+"""
+Tool for managing files across different storage backends.
+Provides a unified interface for file operations with multiple storage options.
+"""
 import os
 import io
 import re
@@ -7,1685 +11,28 @@ import hashlib
 import zipfile
 import tarfile
 import gzip
-import pathlib
 import mimetypes
-import subprocess
 import logging
 from datetime import datetime
-from abc import ABC, abstractmethod
 from typing import Dict, List, BinaryIO, Optional, Union, Tuple, Any, Set, Iterator
 
 # Import config system
 from src.config import load_config, Config
 
+# Import storage backends
+from src.tools.storage_backends import (
+    StorageBackend,
+    LocalStorageBackend,
+    GitStorageBackend,
+    GoogleDriveStorageBackend,
+    OneDriveStorageBackend,
+    FileManagerError,
+    StorageBackendError,
+    FileOperationError
+)
+
 # Set up logging
 logger = logging.getLogger(__name__)
-
-class FileManagerError(Exception):
-    """Base exception for all file manager errors."""
-    pass
-
-class StorageBackendError(FileManagerError):
-    """Exception raised for errors in storage backends."""
-    pass
-
-class FileOperationError(FileManagerError):
-    """Exception raised for errors during file operations."""
-    pass
-
-class StorageBackend(ABC):
-    """Abstract base class for storage backends."""
-    
-    @abstractmethod
-    def read_file(self, path: str) -> bytes:
-        """Read a file and return its contents as bytes."""
-        pass
-    
-    @abstractmethod
-    def write_file(self, path: str, content: bytes) -> bool:
-        """Write content to a file."""
-        pass
-    
-    @abstractmethod
-    def delete_file(self, path: str) -> bool:
-        """Delete a file."""
-        pass
-    
-    @abstractmethod
-    def list_files(self, path: str) -> List[Dict[str, Any]]:
-        """List files in a directory."""
-        pass
-    
-    @abstractmethod
-    def file_exists(self, path: str) -> bool:
-        """Check if a file exists."""
-        pass
-    
-    @abstractmethod
-    def create_directory(self, path: str) -> bool:
-        """Create a directory."""
-        pass
-    
-    @abstractmethod
-    def rename_file(self, old_path: str, new_path: str) -> bool:
-        """Rename or move a file."""
-        pass
-    
-    @abstractmethod
-    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
-        """
-        Search for files matching a pattern.
-        
-        Args:
-            path: Base directory to search in
-            pattern: Regular expression pattern to match against file names
-            recursive: Whether to search recursively through subdirectories
-            
-        Returns:
-            List of matching file information dictionaries
-        """
-        pass
-    
-    @abstractmethod
-    def get_file_info(self, path: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a file.
-        
-        Args:
-            path: Path to the file
-            
-        Returns:
-            Dictionary with detailed file information
-        """
-        pass
-    
-    @abstractmethod
-    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
-        """
-        Calculate a hash of the file contents.
-        
-        Args:
-            path: Path to the file
-            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
-            
-        Returns:
-            Hex digest of the hash, or None if the file doesn't exist
-        """
-        pass
-
-
-class LocalStorageBackend(StorageBackend):
-    """Local filesystem storage backend."""
-    
-    def __init__(self, base_path: str = "data/files/local"):
-        self.base_path = pathlib.Path(base_path)
-        try:
-            os.makedirs(self.base_path, exist_ok=True)
-            logger.info(f"Successfully initialized storage at {self.base_path}")
-        except PermissionError:
-            logger.warning(f"Permission denied creating directory {self.base_path}")
-            logger.warning(f"Will attempt to use existing directories or fallback to temporary storage")
-            # Try to use a temporary directory as fallback
-            import tempfile
-            temp_dir = tempfile.gettempdir()
-            temp_storage_path = os.path.join(temp_dir, "openmanus_storage")
-            try:
-                os.makedirs(temp_storage_path, exist_ok=True)
-                self.base_path = pathlib.Path(temp_storage_path)
-                logger.info(f"Using fallback storage location: {self.base_path}")
-            except Exception as e:
-                logger.error(f"Failed to create fallback storage: {e}")
-                # Last resort: use the current directory
-                self.base_path = pathlib.Path('.')
-                logger.warning(f"Using current directory as storage location")
-        except Exception as e:
-            logger.error(f"Failed to initialize storage at {self.base_path}: {e}", exc_info=True)
-            # Fallback to current directory
-            self.base_path = pathlib.Path('.')
-            logger.warning(f"Using current directory as storage location")
-            
-        # Initialize mimetypes
-        mimetypes.init()
-    
-    def _full_path(self, path: str) -> pathlib.Path:
-        """Get the full path by joining with base_path."""
-        # Use normpath to handle parent directory references (..)
-        normalized = os.path.normpath(path)
-        if normalized.startswith(".."):
-            raise ValueError("Path cannot navigate above base directory")
-        return self.base_path / normalized
-    
-    def read_file(self, path: str) -> bytes:
-        """Read a file and return its contents as bytes."""
-        try:
-            with open(self._full_path(path), 'rb') as f:
-                return f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"File not found: {path}")
-    
-    def write_file(self, path: str, content: bytes) -> bool:
-        """Write content to a file."""
-        try:
-            full_path = self._full_path(path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            with open(full_path, 'wb') as f:
-                f.write(content)
-            return True
-        except Exception as e:
-            print(f"Error writing file: {e}")
-            return False
-    
-    def delete_file(self, path: str) -> bool:
-        """Delete a file."""
-        try:
-            full_path = self._full_path(path)
-            if full_path.is_file():
-                os.remove(full_path)
-                return True
-            return False
-        except Exception as e:
-            print(f"Error deleting file: {e}")
-            return False
-    
-    def list_files(self, path: str = "") -> List[Dict[str, Any]]:
-        """List files in a directory."""
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists():
-                return []
-            
-            result = []
-            for item in full_path.iterdir():
-                stat = item.stat()
-                relative_path = str(item.relative_to(self.base_path))
-                result.append({
-                    "name": item.name,
-                    "path": relative_path,
-                    "type": "directory" if item.is_dir() else "file",
-                    "size": stat.st_size if item.is_file() else 0,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
-                })
-            return result
-        except Exception as e:
-            print(f"Error listing files: {e}")
-            return []
-    
-    def file_exists(self, path: str) -> bool:
-        """Check if a file exists."""
-        return self._full_path(path).exists()
-    
-    def create_directory(self, path: str) -> bool:
-        """Create a directory."""
-        try:
-            full_path = self._full_path(path)
-            os.makedirs(full_path, exist_ok=True)
-            return True
-        except Exception as e:
-            print(f"Error creating directory: {e}")
-            return False
-    
-    def rename_file(self, old_path: str, new_path: str) -> bool:
-        """Rename or move a file."""
-        try:
-            old_full_path = self._full_path(old_path)
-            new_full_path = self._full_path(new_path)
-            
-            if not old_full_path.exists():
-                return False
-                
-            # Create parent directories for the new path if needed
-            os.makedirs(os.path.dirname(new_full_path), exist_ok=True)
-            
-            # Move the file
-            shutil.move(old_full_path, new_full_path)
-            return True
-        except Exception as e:
-            print(f"Error renaming file: {e}")
-            return False
-    
-    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
-        """
-        Search for files matching a pattern.
-        
-        Args:
-            path: Base directory to search in
-            pattern: Regular expression pattern to match against file names
-            recursive: Whether to search recursively through subdirectories
-            
-        Returns:
-            List of matching file information dictionaries
-        """
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists():
-                return []
-            
-            results = []
-            pattern_regex = re.compile(pattern)
-            
-            # Define a recursive function to walk directories
-            def walk_directory(current_path):
-                for item in current_path.iterdir():
-                    # Check if the item name matches the pattern
-                    if pattern_regex.search(item.name):
-                        stat = item.stat()
-                        relative_path = str(item.relative_to(self.base_path))
-                        results.append({
-                            "name": item.name,
-                            "path": relative_path,
-                            "type": "directory" if item.is_dir() else "file",
-                            "size": stat.st_size if item.is_file() else 0,
-                            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                            "match": "name"  # Indicate that the name matched the pattern
-                        })
-                    
-                    # If it's a directory and we're searching recursively, search inside it
-                    if item.is_dir() and recursive:
-                        walk_directory(item)
-            
-            # Start the search
-            walk_directory(full_path)
-            return results
-        except Exception as e:
-            print(f"Error searching files: {e}")
-            return []
-    
-    def get_file_info(self, path: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a file.
-        
-        Args:
-            path: Path to the file
-            
-        Returns:
-            Dictionary with detailed file information
-        """
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists():
-                raise FileNotFoundError(f"File not found: {path}")
-            
-            stat = full_path.stat()
-            file_info = {
-                "name": full_path.name,
-                "path": str(full_path.relative_to(self.base_path)),
-                "type": "directory" if full_path.is_dir() else "file",
-                "size": stat.st_size if full_path.is_file() else 0,
-                "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "accessed": datetime.fromtimestamp(stat.st_atime).isoformat(),
-                "permissions": oct(stat.st_mode)[-3:],  # Last 3 digits of octal mode
-            }
-            
-            # Add additional information for files
-            if full_path.is_file():
-                # Guess MIME type
-                mime_type, encoding = mimetypes.guess_type(full_path)
-                file_info["mime_type"] = mime_type or "application/octet-stream"
-                if encoding:
-                    file_info["encoding"] = encoding
-                
-                # Check if it's a text file (simple heuristic)
-                try:
-                    with open(full_path, 'rb') as f:
-                        sample = f.read(1024)  # Read a sample of the file
-                        # Check if it's likely to be text
-                        is_text = True
-                        for byte in sample:
-                            if byte < 9 or (byte > 13 and byte < 32 and byte != 127):
-                                is_text = False
-                                break
-                        file_info["is_text"] = is_text
-                except:
-                    file_info["is_text"] = False
-            
-            return file_info
-        except Exception as e:
-            print(f"Error getting file info: {e}")
-            return {"error": str(e)}
-    
-    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
-        """
-        Calculate a hash of the file contents.
-        
-        Args:
-            path: Path to the file
-            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
-            
-        Returns:
-            Hex digest of the hash, or None if the file doesn't exist
-        """
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists() or not full_path.is_file():
-                return None
-            
-            hash_func = None
-            if hash_type == "md5":
-                hash_func = hashlib.md5()
-            elif hash_type == "sha1":
-                hash_func = hashlib.sha1()
-            elif hash_type == "sha256":
-                hash_func = hashlib.sha256()
-            else:
-                raise ValueError(f"Unsupported hash type: {hash_type}")
-            
-            with open(full_path, 'rb') as f:
-                # Read in chunks to handle large files
-                for chunk in iter(lambda: f.read(4096), b''):
-                    hash_func.update(chunk)
-            
-            return hash_func.hexdigest()
-        except Exception as e:
-            print(f"Error calculating file hash: {e}")
-            return None
-
-
-class GitStorageBackend(StorageBackend):
-    """Git repository storage backend."""
-    
-    def __init__(self, repo_path: str = "data/files/git", 
-                 user_name: str = "OpenManus", 
-                 user_email: str = "openmanus@example.com"):
-        self.repo_path = pathlib.Path(repo_path)
-        self.user_name = user_name
-        self.user_email = user_email
-        self.initialized = False
-        
-        try:
-            # Ensure the repo path exists
-            os.makedirs(self.repo_path, exist_ok=True)
-            print(f"Successfully created Git repository directory at {self.repo_path}")
-        except PermissionError:
-            print(f"WARNING: Permission denied creating directory {self.repo_path}")
-            print(f"Will attempt to use existing directories or fallback to temporary storage")
-            # Try to use a temporary directory as fallback
-            import tempfile
-            temp_dir = tempfile.gettempdir()
-            temp_storage_path = os.path.join(temp_dir, "openmanus_git_storage")
-            try:
-                os.makedirs(temp_storage_path, exist_ok=True)
-                self.repo_path = pathlib.Path(temp_storage_path)
-                print(f"Using fallback Git storage location: {self.repo_path}")
-            except Exception as e:
-                print(f"ERROR: Failed to create fallback Git storage: {e}")
-                # Last resort: use the current directory
-                self.repo_path = pathlib.Path('git_storage')
-                try:
-                    os.makedirs(self.repo_path, exist_ok=True)
-                    print(f"Using current directory as Git storage location: {self.repo_path}")
-                except Exception as e2:
-                    print(f"ERROR: Could not create Git storage anywhere: {e2}")
-                    self.initialized = False
-                    return
-        except Exception as e:
-            print(f"ERROR: Failed to initialize Git storage at {self.repo_path}: {e}")
-            self.initialized = False
-            return
-            
-        # Initialize mimetypes
-        mimetypes.init()
-        
-        # Check if it's a git repo, initialize if not
-        if not (self.repo_path / ".git").exists():
-            try:
-                # Initialize git repo
-                subprocess.run(["git", "init"], cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                # Set up git config for commits
-                subprocess.run(["git", "config", "user.name", self.user_name], 
-                               cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                subprocess.run(["git", "config", "user.email", self.user_email], 
-                               cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                # Initial commit
-                try:
-                    with open(self.repo_path / "README.md", "w") as f:
-                        f.write(f"# OpenManus Git Storage\n\nThis repository is managed by OpenManus File Manager.")
-                    
-                    subprocess.run(["git", "add", "README.md"], 
-                                   cwd=self.repo_path, check=True, 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    subprocess.run(["git", "commit", "-m", "Initial commit"], 
-                                   cwd=self.repo_path, check=True, 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    print(f"Git repository successfully initialized at {self.repo_path}")
-                    self.initialized = True
-                except Exception as e:
-                    print(f"WARNING: Could not create initial commit: {e}")
-                    self.initialized = False
-            except subprocess.CalledProcessError as e:
-                print(f"Error initializing git repository: {e}")
-                self.initialized = False
-            except Exception as e:
-                print(f"Unexpected error during Git initialization: {e}")
-                self.initialized = False
-        else:
-            self.initialized = True
-            print(f"Using existing Git repository at {self.repo_path}")
-    
-    def _full_path(self, path: str) -> pathlib.Path:
-        """Get the full path by joining with repo_path."""
-        # Use normpath to handle parent directory references (..)
-        normalized = os.path.normpath(path)
-        if normalized.startswith(".."):
-            raise ValueError("Path cannot navigate above repository directory")
-        return self.repo_path / normalized
-    
-    def read_file(self, path: str) -> bytes:
-        """Read a file and return its contents as bytes."""
-        if not self.initialized:
-            print("WARNING: Git repository not properly initialized")
-            raise IOError("Git repository not properly initialized")
-            
-        try:
-            with open(self._full_path(path), 'rb') as f:
-                return f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"File not found: {path}")
-        except PermissionError:
-            print(f"Permission denied when reading {path}")
-            raise PermissionError(f"Permission denied when reading {path}")
-        except Exception as e:
-            print(f"Unexpected error reading file {path}: {e}")
-            raise
-    
-    def write_file(self, path: str, content: bytes, commit_message: Optional[str] = None) -> bool:
-        """
-        Write content to a file and commit it.
-        
-        Args:
-            path: File path
-            content: File content
-            commit_message: Optional commit message. If None, a default message is used.
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.initialized:
-            print("WARNING: Git repository not properly initialized")
-            # Try to write the file anyway without git operations
-            try:
-                full_path = self._full_path(path)
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                
-                # Write the file
-                with open(full_path, 'wb') as f:
-                    f.write(content)
-                
-                print(f"File written to {full_path} but not committed (Git not initialized)")
-                return True
-            except Exception as e:
-                print(f"Error writing file (Git not initialized): {e}")
-                return False
-            
-        try:
-            full_path = self._full_path(path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            
-            # Write the file
-            with open(full_path, 'wb') as f:
-                f.write(content)
-            
-            try:
-                # Stage the file
-                subprocess.run(["git", "add", path], 
-                               cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                # Commit the change
-                message = commit_message or f"Update file: {path}"
-                subprocess.run(["git", "commit", "-m", message], 
-                               cwd=self.repo_path, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                print(f"File successfully written and committed: {path}")
-            except Exception as git_error:
-                print(f"WARNING: File written but git operations failed: {git_error}")
-                # The file was written successfully even though git operations failed
-                return True
-            
-            return True
-        except PermissionError as e:
-            print(f"Permission denied when writing to {path}: {e}")
-            return False
-        except Exception as e:
-            print(f"Error writing to git repository: {e}")
-            return False
-    
-    def delete_file(self, path: str, commit_message: Optional[str] = None) -> bool:
-        """
-        Delete a file and commit the change.
-        
-        Args:
-            path: File path
-            commit_message: Optional commit message. If None, a default message is used.
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            full_path = self._full_path(path)
-            
-            if not full_path.exists():
-                return False
-            
-            # Remove the file
-            subprocess.run(["git", "rm", path], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Commit the change
-            message = commit_message or f"Delete file: {path}"
-            subprocess.run(["git", "commit", "-m", message], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            return True
-        except Exception as e:
-            print(f"Error deleting from git repository: {e}")
-            return False
-    
-    def list_files(self, path: str = "") -> List[Dict[str, Any]]:
-        """List files in a directory within the git repository."""
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists():
-                return []
-            
-            result = []
-            for item in full_path.iterdir():
-                # Skip .git directory
-                if item.name == ".git":
-                    continue
-                    
-                stat = item.stat()
-                relative_path = str(item.relative_to(self.repo_path))
-                
-                # Get last modification info from git
-                try:
-                    git_info = subprocess.run(
-                        ["git", "log", "-1", "--format=%at", "--", relative_path],
-                        cwd=self.repo_path, check=True, 
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
-                    last_commit_time = git_info.stdout.decode().strip()
-                    if last_commit_time:
-                        modified = datetime.fromtimestamp(int(last_commit_time)).isoformat()
-                    else:
-                        modified = datetime.fromtimestamp(stat.st_mtime).isoformat()
-                except:
-                    modified = datetime.fromtimestamp(stat.st_mtime).isoformat()
-                
-                result.append({
-                    "name": item.name,
-                    "path": relative_path,
-                    "type": "directory" if item.is_dir() else "file",
-                    "size": stat.st_size if item.is_file() else 0,
-                    "modified": modified
-                })
-            return result
-        except Exception as e:
-            print(f"Error listing files in git repository: {e}")
-            return []
-    
-    def file_exists(self, path: str) -> bool:
-        """Check if a file exists in the repository."""
-        return self._full_path(path).exists()
-    
-    def create_directory(self, path: str) -> bool:
-        """
-        Create a directory in the repository.
-        Git doesn't track empty directories, so we create a .gitkeep file.
-        """
-        try:
-            full_path = self._full_path(path)
-            os.makedirs(full_path, exist_ok=True)
-            
-            # Create .gitkeep to ensure directory is tracked
-            gitkeep_path = full_path / ".gitkeep"
-            with open(gitkeep_path, 'w') as f:
-                pass
-            
-            # Stage and commit
-            subprocess.run(["git", "add", f"{path}/.gitkeep"], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            subprocess.run(["git", "commit", "-m", f"Create directory: {path}"], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            return True
-        except Exception as e:
-            print(f"Error creating directory in git repository: {e}")
-            return False
-    
-    def rename_file(self, old_path: str, new_path: str, commit_message: Optional[str] = None) -> bool:
-        """
-        Rename or move a file in the repository.
-        
-        Args:
-            old_path: Current file path
-            new_path: New file path
-            commit_message: Optional commit message. If None, a default message is used.
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            if not self.file_exists(old_path):
-                return False
-                
-            # Create parent directories for the new path if needed
-            new_full_path = self._full_path(new_path)
-            os.makedirs(os.path.dirname(new_full_path), exist_ok=True)
-            
-            # Use git mv to move/rename the file
-            subprocess.run(["git", "mv", old_path, new_path], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Commit the change
-            message = commit_message or f"Rename file: {old_path} → {new_path}"
-            subprocess.run(["git", "commit", "-m", message], 
-                           cwd=self.repo_path, check=True, 
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            return True
-        except Exception as e:
-            print(f"Error renaming file in git repository: {e}")
-            return False
-    
-    def get_file_history(self, path: str, max_entries: int = 10) -> List[Dict[str, Any]]:
-        """
-        Get the commit history for a file.
-        
-        Args:
-            path: File path
-            max_entries: Maximum number of history entries to return
-            
-        Returns:
-            List of commit information dictionaries
-        """
-        try:
-            # Check if file exists
-            if not self.file_exists(path):
-                return []
-                
-            # Get git log
-            git_log = subprocess.run(
-                ["git", "log", f"-{max_entries}", "--format=%H|%an|%at|%s", "--", path],
-                cwd=self.repo_path, check=True, 
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            
-            log_entries = git_log.stdout.decode().strip().split("\n")
-            history = []
-            
-            for entry in log_entries:
-                if not entry:
-                    continue
-                    
-                parts = entry.split("|")
-                if len(parts) != 4:
-                    continue
-                    
-                commit_hash, author, timestamp, message = parts
-                history.append({
-                    "commit_hash": commit_hash,
-                    "author": author,
-                    "timestamp": datetime.fromtimestamp(int(timestamp)).isoformat(),
-                    "message": message
-                })
-                
-            return history
-        except Exception as e:
-            print(f"Error getting file history: {e}")
-            return []
-            
-    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
-        """
-        Search for files matching a pattern in the git repository.
-        
-        Args:
-            path: Base directory to search in
-            pattern: Regular expression pattern to match against file names
-            recursive: Whether to search recursively through subdirectories
-            
-        Returns:
-            List of matching file information dictionaries
-        """
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists():
-                return []
-            
-            results = []
-            pattern_regex = re.compile(pattern)
-            
-            # Use git ls-files for a more git-aware search
-            git_cmd = ["git", "ls-files", "--full-name"]
-            if not recursive:
-                # Add path with trailing slash to list only direct children
-                search_path = str(pathlib.Path(path)) + ("/" if path else "")
-                git_cmd.append(search_path)
-            else:
-                # Search recursively from the specified path
-                if path:
-                    git_cmd.append(path)
-            
-            ls_files = subprocess.run(
-                git_cmd,
-                cwd=self.repo_path, check=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            
-            file_list = ls_files.stdout.decode().strip().split("\n")
-            for file_path in file_list:
-                if not file_path:
-                    continue
-                
-                # Check if the file matches the pattern
-                file_name = os.path.basename(file_path)
-                if pattern_regex.search(file_name):
-                    full_file_path = self._full_path(file_path)
-                    
-                    # Get file info
-                    try:
-                        stat = full_file_path.stat()
-                        
-                        # Get last commit timestamp for the file
-                        git_info = subprocess.run(
-                            ["git", "log", "-1", "--format=%at", "--", file_path],
-                            cwd=self.repo_path, check=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                        )
-                        last_commit_time = git_info.stdout.decode().strip()
-                        
-                        if last_commit_time:
-                            modified = datetime.fromtimestamp(int(last_commit_time)).isoformat()
-                        else:
-                            modified = datetime.fromtimestamp(stat.st_mtime).isoformat()
-                        
-                        results.append({
-                            "name": file_name,
-                            "path": file_path,
-                            "type": "file",  # Git ls-files only returns files
-                            "size": stat.st_size,
-                            "modified": modified,
-                            "match": "name"  # Indicate that the name matched the pattern
-                        })
-                    except (FileNotFoundError, subprocess.SubprocessError):
-                        # Skip files that can't be accessed
-                        continue
-            
-            return results
-        except Exception as e:
-            print(f"Error searching files in git repository: {e}")
-            return []
-    
-    def get_file_info(self, path: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a file in the git repository.
-        
-        Args:
-            path: Path to the file
-            
-        Returns:
-            Dictionary with detailed file information
-        """
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists():
-                raise FileNotFoundError(f"File not found: {path}")
-            
-            stat = full_path.stat()
-            
-            # Get git-specific information
-            git_info = {}
-            
-            # Get last commit info
-            try:
-                last_commit = subprocess.run(
-                    ["git", "log", "-1", "--format=%H|%an|%ae|%at|%s", "--", path],
-                    cwd=self.repo_path, check=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-                
-                commit_info = last_commit.stdout.decode().strip()
-                if commit_info:
-                    parts = commit_info.split("|")
-                    if len(parts) == 5:
-                        commit_hash, author_name, author_email, timestamp, message = parts
-                        git_info["last_commit"] = {
-                            "hash": commit_hash,
-                            "author": author_name,
-                            "email": author_email,
-                            "timestamp": datetime.fromtimestamp(int(timestamp)).isoformat(),
-                            "message": message
-                        }
-            except subprocess.SubprocessError:
-                # Failed to get git info, continue without it
-                pass
-                
-            # Build the file info dictionary
-            file_info = {
-                "name": full_path.name,
-                "path": str(full_path.relative_to(self.repo_path)),
-                "type": "directory" if full_path.is_dir() else "file",
-                "size": stat.st_size if full_path.is_file() else 0,
-                "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "accessed": datetime.fromtimestamp(stat.st_atime).isoformat(),
-                "permissions": oct(stat.st_mode)[-3:],  # Last 3 digits of octal mode
-                "git": git_info
-            }
-            
-            # Add additional information for files
-            if full_path.is_file():
-                # Guess MIME type
-                mime_type, encoding = mimetypes.guess_type(full_path)
-                file_info["mime_type"] = mime_type or "application/octet-stream"
-                if encoding:
-                    file_info["encoding"] = encoding
-                
-                # Check if it's a text file (simple heuristic)
-                try:
-                    with open(full_path, 'rb') as f:
-                        sample = f.read(1024)  # Read a sample of the file
-                        # Check if it's likely to be text
-                        is_text = True
-                        for byte in sample:
-                            if byte < 9 or (byte > 13 and byte < 32 and byte != 127):
-                                is_text = False
-                                break
-                        file_info["is_text"] = is_text
-                except:
-                    file_info["is_text"] = False
-            
-            return file_info
-        except Exception as e:
-            print(f"Error getting file info from git repository: {e}")
-            return {"error": str(e)}
-    
-    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
-        """
-        Calculate a hash of the file contents.
-        
-        Args:
-            path: Path to the file
-            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
-            
-        Returns:
-            Hex digest of the hash, or None if the file doesn't exist
-        """
-        try:
-            full_path = self._full_path(path)
-            if not full_path.exists() or not full_path.is_file():
-                return None
-            
-            # For git repositories, we can use git hash-object if the hash type is sha1
-            if hash_type == "sha1":
-                try:
-                    git_hash = subprocess.run(
-                        ["git", "hash-object", path],
-                        cwd=self.repo_path, check=True,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
-                    return git_hash.stdout.decode().strip()
-                except subprocess.SubprocessError:
-                    # Fall back to manual calculation
-                    pass
-            
-            # Manual hash calculation for other hash types or as fallback
-            hash_func = None
-            if hash_type == "md5":
-                hash_func = hashlib.md5()
-            elif hash_type == "sha1":
-                hash_func = hashlib.sha1()
-            elif hash_type == "sha256":
-                hash_func = hashlib.sha256()
-            else:
-                raise ValueError(f"Unsupported hash type: {hash_type}")
-            
-            with open(full_path, 'rb') as f:
-                # Read in chunks to handle large files
-                for chunk in iter(lambda: f.read(4096), b''):
-                    hash_func.update(chunk)
-            
-            return hash_func.hexdigest()
-        except Exception as e:
-            print(f"Error calculating file hash in git repository: {e}")
-            return None
-
-
-# Note: The following two classes would need to be properly implemented with the 
-# respective APIs. These are skeleton implementations.
-            
-class GoogleDriveStorageBackend(StorageBackend):
-    """Google Drive storage backend."""
-    
-    def __init__(self, credentials_path: str = None, root_folder: str = "OpenManus"):
-        self.authenticated = False
-        self.credentials_path = credentials_path
-        self.root_folder = root_folder
-        self.root_folder_id = None
-        self.service = None
-        self.path_cache = {}  # Cache for path to file ID mapping
-        
-        # Import Google Drive API dependencies
-        try:
-            from googleapiclient.discovery import build
-            from google_auth_oauthlib.flow import InstalledAppFlow
-            from google.auth.transport.requests import Request
-            from google.oauth2.credentials import Credentials
-            import pickle
-            
-            self.googleapiclient_discovery = build
-            self.InstalledAppFlow = InstalledAppFlow
-            self.Request = Request
-            self.Credentials = Credentials
-            self.pickle = pickle
-            
-            # APIs imported successfully
-            self.imports_successful = True
-        except ImportError:
-            print("Error: Google Drive API dependencies not installed.")
-            print("Run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
-            self.imports_successful = False
-            return
-        
-        if not credentials_path:
-            print("Note: GoogleDriveStorageBackend requires credentials_path for authentication.")
-            return
-            
-        if not self.imports_successful:
-            print("Cannot initialize Google Drive backend due to missing dependencies.")
-            return
-        
-        try:
-            # Define the scopes required
-            SCOPES = ['https://www.googleapis.com/auth/drive']
-            
-            # Authenticate and create the Drive service
-            creds = None
-            token_path = os.path.join(os.path.dirname(credentials_path), 'token.pickle')
-            
-            # Check if token already exists
-            if os.path.exists(token_path):
-                with open(token_path, 'rb') as token:
-                    creds = self.pickle.load(token)
-            
-            # If credentials don't exist or are invalid, get new ones
-            if not creds or not creds.valid:
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(self.Request())
-                else:
-                    flow = self.InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-                    creds = flow.run_local_server(port=0)
-                
-                # Save the credentials for the next run
-                os.makedirs(os.path.dirname(token_path), exist_ok=True)
-                with open(token_path, 'wb') as token:
-                    self.pickle.dump(creds, token)
-            
-            # Build the Drive service
-            self.service = self.googleapiclient_discovery('drive', 'v3', credentials=creds)
-            
-            # Find or create the root folder
-            self.root_folder_id = self._get_or_create_root_folder()
-            
-            self.authenticated = True
-            print(f"Google Drive authentication successful, using root folder: {self.root_folder} (ID: {self.root_folder_id})")
-        except Exception as e:
-            print(f"Error authenticating with Google Drive: {e}")
-            self.authenticated = False
-    
-    def _get_or_create_root_folder(self) -> str:
-        """Find or create the root folder and return its ID."""
-        if not self.service:
-            raise StorageBackendError("Google Drive service not initialized")
-            
-        # Check if root folder exists
-        response = self.service.files().list(
-            q=f"name='{self.root_folder}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
-            spaces='drive',
-            fields='files(id, name)'
-        ).execute()
-        
-        folders = response.get('files', [])
-        if folders:
-            # Use the first matching folder
-            return folders[0]['id']
-        
-        # Create the root folder if it doesn't exist
-        folder_metadata = {
-            'name': self.root_folder,
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
-        folder = self.service.files().create(body=folder_metadata, fields='id').execute()
-        return folder.get('id')
-    
-    def _get_parent_folder_id(self, path: str) -> str:
-        """
-        Get the ID of the parent folder for a given path.
-        Creates intermediate folders if they don't exist.
-        """
-        if not self.authenticated or not self.service:
-            raise StorageBackendError("Google Drive authentication required")
-            
-        if not path or path == '/' or path == '.':
-            return self.root_folder_id
-            
-        # Split the path into components
-        path_parts = os.path.normpath(path).split(os.sep)
-        path_parts = [p for p in path_parts if p and p != '.']
-        
-        # Start from the root folder
-        current_folder_id = self.root_folder_id
-        
-        # Navigate through each path component
-        current_path = ""
-        for i, folder_name in enumerate(path_parts[:-1]):  # All except the last component (which is the file name)
-            current_path = os.path.join(current_path, folder_name)
-            
-            # Check if this path is in cache
-            if current_path in self.path_cache:
-                current_folder_id = self.path_cache[current_path]
-                continue
-                
-            # Check if the folder exists
-            query = f"name='{folder_name}' and '{current_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            response = self.service.files().list(
-                q=query,
-                spaces='drive',
-                fields='files(id, name)'
-            ).execute()
-            
-            folders = response.get('files', [])
-            if folders:
-                # Use the existing folder
-                current_folder_id = folders[0]['id']
-            else:
-                # Create a new folder
-                folder_metadata = {
-                    'name': folder_name,
-                    'mimeType': 'application/vnd.google-apps.folder',
-                    'parents': [current_folder_id]
-                }
-                folder = self.service.files().create(body=folder_metadata, fields='id').execute()
-                current_folder_id = folder.get('id')
-            
-            # Cache this path
-            self.path_cache[current_path] = current_folder_id
-            
-        return current_folder_id
-    
-    def _get_file_id(self, path: str) -> Optional[str]:
-        """Get the ID of a file at the given path."""
-        if not self.authenticated or not self.service:
-            return None
-            
-        # Handle empty/root path
-        if not path or path == "/" or path == ".":
-            return self.root_folder_id
-            
-        # Check if this path is in cache
-        if path in self.path_cache:
-            return self.path_cache[path]
-            
-        # Get parent folder ID and file name
-        parent_path = os.path.dirname(path)
-        file_name = os.path.basename(path)
-        
-        parent_id = self._get_parent_folder_id(parent_path)
-        
-        # Query for the file in the parent folder
-        query = f"name='{file_name}' and '{parent_id}' in parents and trashed=false"
-        response = self.service.files().list(
-            q=query,
-            spaces='drive',
-            fields='files(id, name, mimeType)'
-        ).execute()
-        
-        files = response.get('files', [])
-        if not files:
-            return None
-            
-        file_id = files[0]['id']
-        
-        # Cache this path
-        self.path_cache[path] = file_id
-        
-        return file_id
-    
-    def read_file(self, path: str) -> bytes:
-        """Read a file from Google Drive."""
-        if not self.authenticated or not self.service:
-            raise StorageBackendError("Google Drive authentication required")
-            
-        file_id = self._get_file_id(path)
-        if not file_id:
-            raise FileNotFoundError(f"File not found: {path}")
-            
-        try:
-            from googleapiclient.http import MediaIoBaseDownload
-            
-            # Download the file content
-            request = self.service.files().get_media(fileId=file_id)
-            file_content = io.BytesIO()
-            downloader = MediaIoBaseDownload(file_content, request)
-            
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
-                
-            file_content.seek(0)
-            return file_content.read()
-        except Exception as e:
-            print(f"Error reading file from Google Drive: {e}")
-            raise
-    
-    def write_file(self, path: str, content: bytes) -> bool:
-        """Write a file to Google Drive."""
-        if not self.authenticated or not self.service:
-            return False
-            
-        try:
-            from googleapiclient.http import MediaInMemoryUpload
-            
-            # Get parent folder ID and file name
-            parent_path = os.path.dirname(path)
-            file_name = os.path.basename(path)
-            
-            parent_id = self._get_parent_folder_id(parent_path)
-            
-            # Check if file already exists
-            file_id = self._get_file_id(path)
-            
-            # Prepare the file metadata and media content
-            file_metadata = {
-                'name': file_name,
-            }
-            
-            media = MediaInMemoryUpload(content)
-            
-            if file_id:
-                # Update existing file
-                self.service.files().update(
-                    fileId=file_id,
-                    body=file_metadata,
-                    media_body=media
-                ).execute()
-            else:
-                # Create new file
-                file_metadata['parents'] = [parent_id]
-                self.service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id'
-                ).execute()
-                
-                # Update the path cache to invalidate this path
-                if path in self.path_cache:
-                    del self.path_cache[path]
-                
-            return True
-        except Exception as e:
-            print(f"Error writing file to Google Drive: {e}")
-            return False
-    
-    def delete_file(self, path: str) -> bool:
-        """Delete a file from Google Drive."""
-        if not self.authenticated or not self.service:
-            return False
-            
-        try:
-            file_id = self._get_file_id(path)
-            if not file_id:
-                # File doesn't exist
-                return False
-                
-            # Delete the file (move to trash)
-            self.service.files().delete(fileId=file_id).execute()
-            
-            # Update the path cache to invalidate this path
-            if path in self.path_cache:
-                del self.path_cache[path]
-                
-            return True
-        except Exception as e:
-            print(f"Error deleting file from Google Drive: {e}")
-            return False
-    
-    def list_files(self, path: str = "") -> List[Dict[str, Any]]:
-        """List files in Google Drive."""
-        if not self.authenticated or not self.service:
-            return []
-            
-        try:
-            folder_id = self._get_file_id(path) if path else self.root_folder_id
-            if not folder_id:
-                # Folder doesn't exist
-                return []
-            
-            # Get files in the folder
-            query = f"'{folder_id}' in parents and trashed=false"
-            response = self.service.files().list(
-                q=query,
-                spaces='drive',
-                fields='files(id, name, mimeType, size, modifiedTime, createdTime)'
-            ).execute()
-            
-            files = response.get('files', [])
-            
-            # Convert to the expected format
-            result = []
-            for item in files:
-                file_path = os.path.join(path, item['name']) if path else item['name']
-                
-                # Cache this path for future lookups
-                self.path_cache[file_path] = item['id']
-                
-                is_folder = item['mimeType'] == 'application/vnd.google-apps.folder'
-                
-                result.append({
-                    "name": item['name'],
-                    "path": file_path,
-                    "type": "directory" if is_folder else "file",
-                    "size": int(item.get('size', 0)) if 'size' in item else 0,
-                    "modified": item.get('modifiedTime'),
-                    "created": item.get('createdTime'),
-                    "id": item['id']
-                })
-                
-            return result
-        except Exception as e:
-            print(f"Error listing files from Google Drive: {e}")
-            return []
-    
-    def file_exists(self, path: str) -> bool:
-        """Check if a file exists in Google Drive."""
-        if not self.authenticated or not self.service:
-            return False
-            
-        try:
-            file_id = self._get_file_id(path)
-            return file_id is not None
-        except Exception as e:
-            print(f"Error checking file existence in Google Drive: {e}")
-            return False
-    
-    def create_directory(self, path: str) -> bool:
-        """Create a directory in Google Drive."""
-        if not self.authenticated or not self.service:
-            return False
-            
-        try:
-            # Check if directory already exists
-            if self.file_exists(path):
-                return True
-                
-            # Get parent folder ID and directory name
-            parent_path = os.path.dirname(path)
-            dir_name = os.path.basename(path)
-            
-            parent_id = self._get_parent_folder_id(parent_path)
-            
-            # Create the folder
-            folder_metadata = {
-                'name': dir_name,
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [parent_id]
-            }
-            folder = self.service.files().create(body=folder_metadata, fields='id').execute()
-            
-            # Cache this path
-            self.path_cache[path] = folder.get('id')
-            
-            return True
-        except Exception as e:
-            print(f"Error creating directory in Google Drive: {e}")
-            return False
-    
-    def rename_file(self, old_path: str, new_path: str) -> bool:
-        """Rename a file in Google Drive."""
-        if not self.authenticated or not self.service:
-            return False
-            
-        try:
-            # Get the file ID for the old path
-            file_id = self._get_file_id(old_path)
-            if not file_id:
-                return False
-                
-            # Get the new parent folder ID and file name
-            new_parent_path = os.path.dirname(new_path)
-            new_file_name = os.path.basename(new_path)
-            
-            new_parent_id = self._get_parent_folder_id(new_parent_path)
-            
-            # Update the file
-            file_metadata = {
-                'name': new_file_name,
-            }
-            
-            # If the parent directory has changed, update that too
-            old_parent_path = os.path.dirname(old_path)
-            if old_parent_path != new_parent_path:
-                # Get previous parents to remove
-                file = self.service.files().get(
-                    fileId=file_id, 
-                    fields='parents'
-                ).execute()
-                previous_parents = ",".join(file.get('parents'))
-                
-                # Move the file to the new folder
-                file = self.service.files().update(
-                    fileId=file_id,
-                    body=file_metadata,
-                    addParents=new_parent_id,
-                    removeParents=previous_parents,
-                    fields='id, parents'
-                ).execute()
-            else:
-                # Just rename the file
-                file = self.service.files().update(
-                    fileId=file_id,
-                    body=file_metadata,
-                    fields='id'
-                ).execute()
-            
-            # Update path cache
-            if old_path in self.path_cache:
-                del self.path_cache[old_path]
-            self.path_cache[new_path] = file_id
-            
-            return True
-        except Exception as e:
-            print(f"Error renaming file in Google Drive: {e}")
-            return False
-            
-    def search_files(self, path: str, pattern: str, recursive: bool = True) -> List[Dict[str, Any]]:
-        """
-        Search for files matching a pattern.
-        
-        Args:
-            path: Base directory to search in
-            pattern: Regular expression pattern to match against file names
-            recursive: Whether to search recursively through subdirectories
-            
-        Returns:
-            List of matching file information dictionaries
-        """
-        if not self.authenticated or not self.service:
-            return []
-            
-        try:
-            folder_id = self._get_file_id(path) if path else self.root_folder_id
-            if not folder_id:
-                return []
-                
-            # Compile the regex pattern
-            pattern_regex = re.compile(pattern)
-            
-            # Results list
-            results = []
-            
-            # Helper function to search recursively
-            def search_folder(folder_id, current_path):
-                # Get files in the folder
-                query = f"'{folder_id}' in parents and trashed=false"
-                response = self.service.files().list(
-                    q=query,
-                    spaces='drive',
-                    fields='files(id, name, mimeType, size, modifiedTime)'
-                ).execute()
-                
-                files = response.get('files', [])
-                
-                for item in files:
-                    file_path = os.path.join(current_path, item['name']) if current_path else item['name']
-                    
-                    # Cache this path
-                    self.path_cache[file_path] = item['id']
-                    
-                    # Check if the name matches the pattern
-                    if pattern_regex.search(item['name']):
-                        is_folder = item['mimeType'] == 'application/vnd.google-apps.folder'
-                        
-                        results.append({
-                            "name": item['name'],
-                            "path": file_path,
-                            "type": "directory" if is_folder else "file",
-                            "size": int(item.get('size', 0)) if 'size' in item else 0,
-                            "modified": item.get('modifiedTime'),
-                            "id": item['id'],
-                            "match": "name"
-                        })
-                    
-                    # If it's a directory and recursive flag is set, search inside it
-                    if item['mimeType'] == 'application/vnd.google-apps.folder' and recursive:
-                        search_folder(item['id'], file_path)
-            
-            # Start the search
-            search_folder(folder_id, path)
-            return results
-        except Exception as e:
-            print(f"Error searching files in Google Drive: {e}")
-            return []
-    
-    def get_file_info(self, path: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a file.
-        
-        Args:
-            path: Path to the file
-            
-        Returns:
-            Dictionary with detailed file information
-        """
-        if not self.authenticated or not self.service:
-            return {"error": "Google Drive authentication required"}
-            
-        try:
-            file_id = self._get_file_id(path)
-            if not file_id:
-                raise FileNotFoundError(f"File not found: {path}")
-                
-            # Get file metadata
-            file = self.service.files().get(
-                fileId=file_id,
-                fields='id, name, mimeType, size, createdTime, modifiedTime, parents, description'
-            ).execute()
-            
-            # Determine if it's a directory
-            is_dir = file['mimeType'] == 'application/vnd.google-apps.folder'
-            
-            # Organize the file info
-            file_info = {
-                "name": file['name'],
-                "path": path,
-                "type": "directory" if is_dir else "file",
-                "size": int(file.get('size', 0)) if 'size' in file else 0,
-                "created": file.get('createdTime'),
-                "modified": file.get('modifiedTime'),
-                "id": file['id'],
-                "mime_type": file['mimeType'],
-            }
-            
-            if 'description' in file and file['description']:
-                file_info["description"] = file['description']
-                
-            if 'parents' in file:
-                file_info["parent_id"] = file['parents'][0]
-                
-            return file_info
-        except Exception as e:
-            print(f"Error getting file info from Google Drive: {e}")
-            return {"error": str(e)}
-    
-    def get_file_hash(self, path: str, hash_type: str = "sha256") -> Optional[str]:
-        """
-        Calculate a hash of the file contents.
-        
-        Args:
-            path: Path to the file
-            hash_type: Type of hash to calculate (md5, sha1, sha256, etc.)
-            
-        Returns:
-            Hex digest of the hash, or None if the file doesn't exist
-        """
-        if not self.authenticated or not self.service:
-            return None
-            
-        try:
-            # Get file content
-            content = self.read_file(path)
-            
-            # Calculate the hash
-            hash_func = None
-            if hash_type == "md5":
-                hash_func = hashlib.md5()
-            elif hash_type == "sha1":
-                hash_func = hashlib.sha1()
-            elif hash_type == "sha256":
-                hash_func = hashlib.sha256()
-            else:
-                raise ValueError(f"Unsupported hash type: {hash_type}")
-                
-            hash_func.update(content)
-            return hash_func.hexdigest()
-        except FileNotFoundError:
-            return None
-        except Exception as e:
-            print(f"Error calculating file hash for Google Drive file: {e}")
-            return None
-
-
-class OneDriveStorageBackend(StorageBackend):
-    """OneDrive storage backend (placeholder)."""
-    
-    def __init__(self, credentials_path: str = None, root_folder: str = "OpenManus"):
-        self.authenticated = False
-        self.credentials_path = credentials_path
-        self.root_folder = root_folder
-        
-        # In a real implementation, we would:
-        # 1. Load OneDrive API credentials
-        # 2. Authenticate with OneDrive
-        # 3. Set up a client
-        
-        if credentials_path:
-            try:
-                # Here would be the actual implementation of OneDrive API authentication
-                # Using libraries like msal (Microsoft Authentication Library) and the Microsoft Graph API
-                # 
-                # Example code (commented out since we don't have the dependencies):
-                #
-                # import msal
-                # import json
-                # import requests
-                #
-                # # Load the credentials file (should contain client_id, tenant_id, etc.)
-                # with open(credentials_path, 'r') as f:
-                #     config = json.load(f)
-                #
-                # # Create the MSAL app
-                # app = msal.PublicClientApplication(
-                #     config["client_id"],
-                #     authority=f"https://login.microsoftonline.com/{config['tenant_id']}"
-                # )
-                #
-                # # Try to get token silently from cache
-                # result = None
-                # accounts = app.get_accounts()
-                # if accounts:
-                #     result = app.acquire_token_silent(
-                #         scopes=["https://graph.microsoft.com/.default"],
-                #         account=accounts[0]
-                #     )
-                #
-                # # If no token in cache, get a new one interactively
-                # if not result:
-                #     result = app.acquire_token_interactive(
-                #         scopes=["https://graph.microsoft.com/.default"]
-                #     )
-                #
-                # # Check if we have an access token
-                # if "access_token" in result:
-                #     self.access_token = result["access_token"]
-                #     self.headers = {"Authorization": f"Bearer {self.access_token}"}
-                #
-                #     # Check if root folder exists, create if not
-                #     drive_response = requests.get(
-                #         "https://graph.microsoft.com/v1.0/me/drive/root/children",
-                #         headers=self.headers
-                #     )
-                #     
-                #     if drive_response.status_code == 200:
-                #         folders = [item for item in drive_response.json()["value"] 
-                #                   if item["name"] == self.root_folder and item["folder"]]
-                #                   
-                #         if not folders:
-                #             # Create the root folder
-                #             folder_response = requests.post(
-                #                 "https://graph.microsoft.com/v1.0/me/drive/root/children",
-                #                 headers=self.headers,
-                #                 json={
-                #                     "name": self.root_folder,
-                #                     "folder": {},
-                #                     "@microsoft.graph.conflictBehavior": "rename"
-                #                 }
-                #             )
-                #             
-                #             if folder_response.status_code == 201:
-                #                 self.root_folder_id = folder_response.json()["id"]
-                #             else:
-                #                 raise Exception(f"Failed to create root folder: {folder_response.text}")
-                #         else:
-                #             self.root_folder_id = folders[0]["id"]
-                
-                self.authenticated = True
-                print(f"OneDrive authentication successful, using root folder: {self.root_folder}")
-            except Exception as e:
-                print(f"Error authenticating with OneDrive: {e}")
-                self.authenticated = False
-        else:
-            # Placeholder authentication message
-            print("Note: OneDriveStorageBackend requires credentials_path for authentication.")
-    
-    def read_file(self, path: str) -> bytes:
-        """Read a file from OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-    
-    def write_file(self, path: str, content: bytes) -> bool:
-        """Write a file to OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-    
-    def delete_file(self, path: str) -> bool:
-        """Delete a file from OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-    
-    def list_files(self, path: str = "") -> List[Dict[str, Any]]:
-        """List files in OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-    
-    def file_exists(self, path: str) -> bool:
-        """Check if a file exists in OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-    
-    def create_directory(self, path: str) -> bool:
-        """Create a directory in OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-    
-    def rename_file(self, old_path: str, new_path: str) -> bool:
-        """Rename a file in OneDrive."""
-        raise NotImplementedError("OneDrive backend not fully implemented")
-
 
 class FileManagerTool:
     """
@@ -1787,7 +134,7 @@ class FileManagerTool:
                 
                 elif backend_name == "google_drive":
                     if backend_config["requires_auth"] and not backend_config.get("credentials_path"):
-                        print("Google Drive backend requires credentials_path to be set")
+                        logger.warning("Google Drive backend requires credentials_path to be set")
                         self.storage_backends["google_drive"] = None
                     else:
                         self.storage_backends["google_drive"] = GoogleDriveStorageBackend(
@@ -1798,7 +145,7 @@ class FileManagerTool:
                 
                 elif backend_name == "onedrive":
                     if backend_config["requires_auth"] and not backend_config.get("credentials_path"):
-                        print("OneDrive backend requires credentials_path to be set")
+                        logger.warning("OneDrive backend requires credentials_path to be set")
                         self.storage_backends["onedrive"] = None
                     else:
                         self.storage_backends["onedrive"] = OneDriveStorageBackend(
@@ -1808,11 +155,11 @@ class FileManagerTool:
                         self.base_paths["onedrive"] = backend_config.get("root_folder", "OpenManus")
                 
                 else:
-                    print(f"Unknown backend type: {backend_name}")
+                    logger.warning(f"Unknown backend type: {backend_name}")
                     self.storage_backends[backend_name] = None
             
             except Exception as e:
-                print(f"Error initializing {backend_name} backend: {e}")
+                logger.error(f"Error initializing {backend_name} backend: {e}", exc_info=True)
                 self.storage_backends[backend_name] = None
     
     def initialize_backend(self, backend_type: str, **kwargs) -> bool:
@@ -1870,7 +217,7 @@ class FileManagerTool:
                 root_folder = self.config["backends"]["google_drive"].get("root_folder", "OpenManus")
                 
                 if not credentials_path:
-                    print("Google Drive backend requires credentials_path")
+                    logger.warning("Google Drive backend requires credentials_path")
                     return False
                     
                 self.storage_backends["google_drive"] = GoogleDriveStorageBackend(
@@ -1885,7 +232,7 @@ class FileManagerTool:
                 root_folder = self.config["backends"]["onedrive"].get("root_folder", "OpenManus")
                 
                 if not credentials_path:
-                    print("OneDrive backend requires credentials_path")
+                    logger.warning("OneDrive backend requires credentials_path")
                     return False
                     
                 self.storage_backends["onedrive"] = OneDriveStorageBackend(
@@ -1896,11 +243,11 @@ class FileManagerTool:
                 return self.storage_backends["onedrive"].authenticated
                 
             else:
-                print(f"Unknown backend type: {backend_type}")
+                logger.warning(f"Unknown backend type: {backend_type}")
                 return False
                 
         except Exception as e:
-            print(f"Error initializing backend {backend_type}: {e}")
+            logger.error(f"Error initializing backend {backend_type}: {e}", exc_info=True)
             return False
     
     def set_storage_preference(self, file_type: str, storage_type: str) -> bool:
@@ -1953,7 +300,7 @@ class FileManagerTool:
         try:
             return storage.read_file(path)
         except Exception as e:
-            print(f"Error reading file: {e}")
+            logger.error(f"Error reading file: {e}", exc_info=True)
             return None
     
     def write_file(self, 
@@ -1991,7 +338,7 @@ class FileManagerTool:
             else:
                 return storage.write_file(path, content)
         except Exception as e:
-            print(f"Error writing file: {e}")
+            logger.error(f"Error writing file: {e}", exc_info=True)
             return False
     
     def delete_file(self, 
@@ -2023,7 +370,7 @@ class FileManagerTool:
             else:
                 return storage.delete_file(path)
         except Exception as e:
-            print(f"Error deleting file: {e}")
+            logger.error(f"Error deleting file: {e}", exc_info=True)
             return False
     
     def list_files(self, 
@@ -2049,7 +396,7 @@ class FileManagerTool:
         try:
             return storage.list_files(path)
         except Exception as e:
-            print(f"Error listing files: {e}")
+            logger.error(f"Error listing files: {e}", exc_info=True)
             return []
     
     def file_exists(self, 
@@ -2075,7 +422,7 @@ class FileManagerTool:
         try:
             return storage.file_exists(path)
         except Exception as e:
-            print(f"Error checking if file exists: {e}")
+            logger.error(f"Error checking if file exists: {e}", exc_info=True)
             return False
     
     def create_directory(self, 
@@ -2101,7 +448,7 @@ class FileManagerTool:
         try:
             return storage.create_directory(path)
         except Exception as e:
-            print(f"Error creating directory: {e}")
+            logger.error(f"Error creating directory: {e}", exc_info=True)
             return False
     
     def rename_file(self, 
@@ -2135,7 +482,7 @@ class FileManagerTool:
             else:
                 return storage.rename_file(old_path, new_path)
         except Exception as e:
-            print(f"Error renaming file: {e}")
+            logger.error(f"Error renaming file: {e}", exc_info=True)
             return False
     
     def read_text(self, 
@@ -2162,7 +509,7 @@ class FileManagerTool:
         try:
             return content.decode(encoding)
         except UnicodeDecodeError:
-            print(f"Error decoding file as {encoding}")
+            logger.error(f"Error decoding file as {encoding}")
             return None
     
     def write_text(self, 
@@ -2190,7 +537,7 @@ class FileManagerTool:
             binary_content = content.encode(encoding)
             return self.write_file(path, binary_content, storage_type, file_type, metadata)
         except Exception as e:
-            print(f"Error writing text file: {e}")
+            logger.error(f"Error writing text file: {e}", exc_info=True)
             return False
     
     def get_file_history(self, 
@@ -2215,7 +562,7 @@ class FileManagerTool:
         try:
             return storage.get_file_history(path, max_entries)
         except Exception as e:
-            print(f"Error getting file history: {e}")
+            logger.error(f"Error getting file history: {e}", exc_info=True)
             return []
             
     def search_files(self, 
@@ -2245,7 +592,7 @@ class FileManagerTool:
         try:
             return storage.search_files(path, pattern, recursive)
         except Exception as e:
-            print(f"Error searching files: {e}")
+            logger.error(f"Error searching files: {e}", exc_info=True)
             return []
             
     def get_file_info(self,
@@ -2281,7 +628,7 @@ class FileManagerTool:
                 
             return file_info
         except Exception as e:
-            print(f"Error getting file info: {e}")
+            logger.error(f"Error getting file info: {e}", exc_info=True)
             return {"error": str(e)}
             
     def get_file_hash(self,
@@ -2309,7 +656,7 @@ class FileManagerTool:
         try:
             return storage.get_file_hash(path, hash_type)
         except Exception as e:
-            print(f"Error calculating file hash: {e}")
+            logger.error(f"Error calculating file hash: {e}", exc_info=True)
             return None
             
     # File tagging system
@@ -2465,7 +812,7 @@ class FileManagerTool:
                 json.dump(self.file_tags, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving tags: {e}")
+            logger.error(f"Error saving tags: {e}", exc_info=True)
             return False
             
     # File compression and archiving
@@ -2576,7 +923,7 @@ class FileManagerTool:
                 
             return None
         except Exception as e:
-            print(f"Error compressing file: {e}")
+            logger.error(f"Error compressing file: {e}", exc_info=True)
             return None
     
     def decompress_file(self,
@@ -2691,7 +1038,7 @@ class FileManagerTool:
             
             return extracted_files
         except Exception as e:
-            print(f"Error decompressing file: {e}")
+            logger.error(f"Error decompressing file: {e}", exc_info=True)
             return []
     
     def sync_file(self,
@@ -2770,7 +1117,7 @@ class FileManagerTool:
                     
             return True
         except Exception as e:
-            print(f"Error synchronizing file: {e}")
+            logger.error(f"Error synchronizing file: {e}", exc_info=True)
             return False
     
     def save_config(self, config_path: str) -> bool:
@@ -2793,7 +1140,7 @@ class FileManagerTool:
                 
             return True
         except Exception as e:
-            print(f"Error saving configuration: {e}")
+            logger.error(f"Error saving configuration: {e}", exc_info=True)
             return False
     
     def load_config(self, config_path: str) -> bool:
@@ -2808,7 +1155,7 @@ class FileManagerTool:
         """
         try:
             if not os.path.exists(config_path):
-                print(f"Configuration file not found: {config_path}")
+                logger.warning(f"Configuration file not found: {config_path}")
                 return False
                 
             # Load the configuration file
@@ -2826,7 +1173,7 @@ class FileManagerTool:
             
             return True
         except Exception as e:
-            print(f"Error loading configuration: {e}")
+            logger.error(f"Error loading configuration: {e}", exc_info=True)
             return False
     
     def get_config(self) -> Dict[str, Any]:
@@ -2901,7 +1248,7 @@ class FileManagerTool:
             # Default to general
             return "general"
         except Exception as e:
-            print(f"Error detecting file type: {e}")
+            logger.error(f"Error detecting file type: {e}", exc_info=True)
             return "general"
     
     def _get_storage(self, storage_type: Optional[str], file_type: Optional[str]) -> Optional[StorageBackend]:
@@ -2923,6 +1270,3 @@ class FileManagerTool:
         if file_type is not None and file_type in self.storage_preferences:
             backend_name = self.storage_preferences[file_type]
             return self.storage_backends.get(backend_name)
-            
-        # Default to local storage
-        return self.storage_backends.get("local")
