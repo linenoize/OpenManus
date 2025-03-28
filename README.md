@@ -107,28 +107,17 @@ cp .env.example .env
 ```
 
 Complete `.env` template:
-```bash
-# LLM Provider Settings (at least one required)
+```
 OPENAI_API_KEY=your_key_here
 ANTHROPIC_API_KEY=your_key_here
-
-# Local LLM settings (optional)
 ENABLE_LOCAL_LLM=false
 LOCAL_LLM_PATH=models/mistral-7b
-
-# Port configuration (customize as needed)
 API_PORT=5010
 TOOLS_PORT=5011
 FRONTEND_PORT=3010
-
-# Vector Database
 VECTOR_DB_BACKEND=faiss
-
-# File storage config paths
 OPENMANUS_CONFIG_PATH=config.json
 FILE_MANAGER_CONFIG_PATH=file_manager_config.json
-
-# Storage preferences by file type
 OPENMANUS_STORAGE_TEMP=local
 OPENMANUS_STORAGE_CODE=git
 OPENMANUS_STORAGE_DOCUMENT=local
@@ -246,7 +235,7 @@ OpenManus/
    ```
 
    And update your `.env`:
-   ```bash
+   ```
    API_PORT=5010
    TOOLS_PORT=5011
    FRONTEND_PORT=3010
