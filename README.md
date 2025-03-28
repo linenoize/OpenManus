@@ -74,38 +74,67 @@ This will launch:
 The unified container option simplifies deployment by running all services in a single container with Nginx as a reverse proxy (exposed on port 80).
 
 ### 4. Configure the Environment
-OpenManus uses a centralized configuration approach with environment variables stored in a `.env` file:
+OpenManus uses a dual configuration approach with environment variables stored in a `.env` file and additional settings in `config.json`:
 
-1. Copy the example environment file:
+1. Copy or create the example environment file:
 ```bash
 cp .env.example .env
 ```
 
-2. Edit the `.env` file to configure:
+2. Edit the `.env` file to configure (add this to your .gitignore):
    - LLM provider API keys (OpenAI, Anthropic)
-   - Storage backend settings
+   - Port configurations 
    - Vector database options
-   - Memory and tool settings
+   - Storage backend settings
 
-Key configuration sections:
+3. Create a `config.json` file (add this to your .gitignore as well):
+```json
+{
+  "llm_preferences": {
+    "default_planner_llm": "gpt4o",
+    "default_executor_llm": "claude",
+    "default_toolagent_llm": "gpt4o"
+  },
+  "vector_db": {
+    "backend": "faiss",
+    "embedding_model": "all-MiniLM-L6-v2"
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "data/logs/openmanus.log"
+  }
+}
+```
+
+Complete `.env` template:
 ```bash
-# LLM Provider Settings
-OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
+# LLM Provider Settings (at least one required)
+OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
 
-# Default LLM preferences
-DEFAULT_PLANNER_LLM=gpt4o
-DEFAULT_EXECUTOR_LLM=claude
-DEFAULT_TOOLAGENT_LLM=local
+# Local LLM settings (optional)
+ENABLE_LOCAL_LLM=false
+LOCAL_LLM_PATH=models/mistral-7b
 
-# Vector Database settings
-VECTOR_DB_BACKEND=faiss  # or chroma, milvus
+# Port configuration (customize as needed)
+API_PORT=5010
+TOOLS_PORT=5011
+FRONTEND_PORT=3010
+
+# Vector Database
+VECTOR_DB_BACKEND=faiss
+
+# File storage config paths
+OPENMANUS_CONFIG_PATH=config.json
+FILE_MANAGER_CONFIG_PATH=file_manager_config.json
 
 # Storage preferences by file type
 OPENMANUS_STORAGE_TEMP=local
 OPENMANUS_STORAGE_CODE=git
-OPENMANUS_STORAGE_DOCUMENT=google_drive
+OPENMANUS_STORAGE_DOCUMENT=local
 ```
+
+> Note: Make sure to add both `.env` and `config.json` to your `.gitignore` file to avoid committing sensitive API keys to your repository.
 
 For full configuration documentation, see `docs/configuration.md`.
 
@@ -183,59 +212,85 @@ OpenManus/
 
 ### Configuration
 
-1. **Copy the example environment file:**
-```bash
-cp .env.example .env
-```
+1. **Creating Required Configuration Files:**
 
-2. **Edit the `.env` file to configure your LLM providers and port settings:**
-```bash
-# OpenAI settings
-OPENAI_API_KEY=your_openai_api_key_here
+   You need to set up two main configuration files:
 
-# Anthropic settings
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
+   - `.env`: Environment variables and API keys
+   - `config.json`: System preferences and settings
 
-# Local LLM settings (optional)
-ENABLE_LOCAL_LLM=true
-LOCAL_LLM_PATH=models/llama3
+   Both files should be added to your `.gitignore` to keep credentials secure.
 
-# Port configuration (used in standard setup)
-FRONTEND_PORT=3000
-API_PORT=5000
-TOOLS_PORT=5001
+2. **Docker Architecture:**
 
-# API client configuration
-API_HOST=localhost
-API_PATH=api  # Used in unified setup, leave empty for standard setup
-```
+   OpenManus can run in two primary configurations:
+   
+   - **Standard setup** (docker-compose.yml): Three separate containers for API, tools, and frontend
+   - **Unified setup** (docker-compose.unified.yml): Single container with Nginx reverse proxy
 
-3. **Edit the `docker-compose.yml` file to customize:**
-```yaml
-services:
-  backend:
-    build: 
-      context: .
-      dockerfile: docker/unified/Dockerfile
-    ports:
-      - "5000:5000"  # API port
-    env_file:
-      - .env
-    environment:
-      - WEB_BROWSER_API_KEY=your_key_here
-    volumes:
-      - ./src:/app/src
-      - ./data:/app/data
+3. **Port Customization:**
 
-  frontend:
-    build:
-      context: .
-      dockerfile: docker/frontend/Dockerfile
-    ports:
-      - "3000:3000"  # Web UI port
-    depends_on:
-      - backend
-```
+   To customize ports (e.g., API on 5010, tools on 5011, frontend on 3010):
+
+   ```yaml
+   # In docker-compose.yml
+   services:
+     unified:
+       ports:
+         - "5010:5000"  # Map container port 5000 to host port 5010
+         - "5011:5001"  # Map container port 5001 to host port 5011
+     
+     frontend:
+       ports:
+         - "3010:3000"  # Map container port 3000 to host port 3010
+   ```
+
+   And update your `.env`:
+   ```bash
+   API_PORT=5010
+   TOOLS_PORT=5011
+   FRONTEND_PORT=3010
+   ```
+
+4. **Web Server Configuration (Apache):**
+
+   To expose OpenManus through Apache with HTTPS:
+
+   ```apache
+   <VirtualHost *:80>
+       ServerName openmanus.site.com
+       Redirect permanent / https://openmanus.site.com/
+   </VirtualHost>
+
+   <VirtualHost *:443>
+       ServerName openmanus.site.com
+       
+       SSLEngine on
+       SSLCertificateFile /path/to/certificate.crt
+       SSLCertificateKeyFile /path/to/private.key
+       
+       # Frontend proxy
+       ProxyPass / http://localhost:3010/
+       ProxyPassReverse / http://localhost:3010/
+       
+       # API proxy
+       ProxyPass /api http://localhost:5010/
+       ProxyPassReverse /api http://localhost:5010/
+       
+       # Tools proxy
+       ProxyPass /tools http://localhost:5011/
+       ProxyPassReverse /tools http://localhost:5011/
+       
+       ErrorLog ${APACHE_LOG_DIR}/openmanus_error.log
+       CustomLog ${APACHE_LOG_DIR}/openmanus_access.log combined
+   </VirtualHost>
+   ```
+
+   Enable required Apache modules:
+   ```bash
+   sudo a2enmod proxy proxy_http ssl
+   sudo systemctl restart apache2
+   ```
 
 ### API Documentation
 The agent server exposes a REST API at http://localhost/api (when using unified container) or http://localhost:5000 (standard setup). Key endpoints:
