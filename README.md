@@ -41,7 +41,7 @@ Before you begin, ensure you have the following installed:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/henryalps/OpenManus.git
+git clone https://github.com/linenoize/OpenManus.git
 cd OpenManus
 ```
 
@@ -124,6 +124,24 @@ OPENMANUS_STORAGE_DOCUMENT=local
 ```
 
 > Note: Make sure to add both `.env` and `config.json` to your `.gitignore` file to avoid committing sensitive API keys to your repository.
+
+4. **Vector Embedding Setup:**
+   
+   The vector database components are installed automatically when using Docker. They include:
+   
+   - **FAISS**: High-performance similarity search library (installed via `faiss-cpu`)
+   - **Sentence Transformers**: Text embedding models like `all-MiniLM-L6-v2` (downloaded on first use)
+   - **ChromaDB** and **Milvus**: Optional alternative vector database backends
+   
+   For local development, install these dependencies manually:
+   
+   ```bash
+   pip install faiss-cpu sentence-transformers
+   # Optional backends
+   pip install chromadb pymilvus
+   ```
+   
+   The first time you use the vector database, the embedding model will be downloaded automatically from Hugging Face (approximately 90MB).
 
 For full configuration documentation, see `docs/configuration.md`.
 
