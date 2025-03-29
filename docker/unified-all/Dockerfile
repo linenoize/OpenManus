@@ -34,14 +34,23 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
+# Set appropriate user for running the container
+USER root
+
 # Install necessary production dependencies
-RUN apt-get update && apt-get -y install --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     nginx \
     nodejs \
     npm \
     procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Create cache directories with proper permissions after nginx is installed
+RUN mkdir -p /.cache /.config/matplotlib /var/lib/nginx/body && \
+    chmod -R 777 /.cache /.config && \
+    chmod -R 777 /var/lib/nginx
 
 # Copy Python dependencies from the python-deps stage
 COPY --from=python-deps /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
