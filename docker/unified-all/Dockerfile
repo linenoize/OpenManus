@@ -48,9 +48,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create cache directories with proper permissions after nginx is installed
-RUN mkdir -p /.cache /.config/matplotlib /var/lib/nginx/body && \
+RUN mkdir -p /.cache /.config/matplotlib /var/lib/nginx/body /var/log/nginx && \
     chmod -R 777 /.cache /.config && \
-    chmod -R 777 /var/lib/nginx
+    chmod -R 777 /var/lib/nginx && \
+    chmod -R 777 /var/log/nginx && \
+    touch /var/log/nginx/access.log /var/log/nginx/error.log && \
+    chmod 666 /var/log/nginx/access.log /var/log/nginx/error.log
 
 # Copy Python dependencies from the python-deps stage
 COPY --from=python-deps /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
@@ -88,7 +91,11 @@ RUN chown -R openmanus:openmanus /app /var/log/nginx /var/lib/nginx
 # Ensure data directories have proper permissions
 RUN chmod -R 755 /app/data
 
-USER openmanus
+# Make sure our user can write to the nginx log
+RUN chmod 777 /var/log/nginx
+
+# Run as root to avoid permission issues
+# USER openmanus
 
 # Start all services
 CMD ["/app/start.sh"]
