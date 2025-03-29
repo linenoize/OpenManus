@@ -22,5 +22,6 @@ services:
       - ./src:/app/src
       - ./data:/app/data:rw
       - ./.env:/app/.env
-    # Ensure the container can create the directory if it doesn't exist yet
-    user: "${UID:-1000}:${GID:-1000}"
+      - ./config.json:/app/config.json
+    # We're now running as root inside the container
+    # user: "${UID:-1000}:${GID:-1000}"
