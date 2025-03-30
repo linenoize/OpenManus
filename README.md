@@ -26,6 +26,7 @@ This repository provides a starting point for developers and researchers to buil
 - **Modular Design**: Easily extendable with new agents, tools, or features.
 - **Multiple LLM Support**: Integration with OpenAI (GPT-4o), Anthropic (Claude), and local models.
 - **LLM Preference System**: Customize which LLM to use for specific agents and tools.
+- **LLM Fallback System**: Automatic fallback to local LLM when cloud providers reject a request.
 - **Community-Driven**: Open to contributions and enhancements.
 
 ## Prerequisites
@@ -112,6 +113,7 @@ OPENAI_API_KEY=your_key_here
 ANTHROPIC_API_KEY=your_key_here
 ENABLE_LOCAL_LLM=false
 LOCAL_LLM_PATH=models/mistral-7b
+ENABLE_LOCAL_LLM_FALLBACK=false  # Enable fallback to local LLM when cloud providers reject prompts
 API_PORT=5010
 TOOLS_PORT=5011
 FRONTEND_PORT=3010
@@ -198,7 +200,37 @@ OPENMANUS_STORAGE_DOCUMENT=local
 
 For full configuration documentation, see `docs/configuration.md`.
 
-### 5. Test the System
+### 5. LLM Fallback System
+
+OpenManus includes a built-in fallback system that automatically redirects requests to a local LLM when cloud providers (like OpenAI or Claude) reject prompts due to content policy violations. This feature is especially useful for:
+
+- Content that may be flagged as sensitive by cloud providers
+- Research scenarios requiring exploration of security topics
+- Ensuring uninterrupted operation when dealing with edge cases
+
+To enable the fallback system:
+
+1. Set the environment variable in your `.env` file:
+   ```
+   ENABLE_LOCAL_LLM=true             # First, enable a local LLM
+   LOCAL_LLM_PATH=models/mistral-7b  # Specify your local model path
+   ENABLE_LOCAL_LLM_FALLBACK=true    # Enable the fallback system
+   ```
+
+2. The system will automatically:
+   - Try the originally requested provider first
+   - If the request is rejected, reroute to a local LLM
+   - Log the rejection and fallback for monitoring
+   - Remember the pattern for future similar requests
+
+3. For future similar requests, the system will directly use the local LLM, bypassing the cloud provider that previously rejected it.
+
+You can monitor the fallback statistics via the API endpoint:
+```
+GET /llm/fallback/stats
+```
+
+### 6. Test the System
 Once running, you can interact with OpenManus via:
 - CLI: Use the provided Python client
 - API: Send requests to http://localhost/api (when using unified container) or http://localhost:5000 (standard setup)
@@ -388,7 +420,19 @@ Response: {
       }
     },
     ...
-  ]
+  ],
+  "fallback_enabled": true
+}
+```
+
+**GET /llm/fallback/stats**: Get statistics about LLM fallback usage.
+```json
+Response: {
+  "total_rejected_prompts": 5,
+  "fallback_providers": {
+    "local": 5
+  },
+  "enable_local_fallback": true
 }
 ```
 
@@ -520,6 +564,7 @@ Please read `CONTRIBUTING.md` for guidelines.
 - ✅ Add vector embedding database for semantic search
 - ✅ Add multiple vector database backends (FAISS, ChromaDB, Milvus)
 - ✅ Implement file management system with multiple storage options
+- ✅ Add automatic fallback system for rejected LLM prompts
 - Add support for GAIA benchmark tasks
 - Integrate advanced NLP models (e.g., LLaMA, Grok)
 - Enhance toolset with:

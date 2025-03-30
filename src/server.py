@@ -23,9 +23,40 @@ available_features = {
     'tools': {}
 }
 
+# Ensure data directories exist
+def ensure_data_directories():
+    """Create necessary data directories if they don't exist"""
+    import os
+    
+    data_dirs = [
+        "data/files/local",
+        "data/files/git",
+        "data/vectors/faiss",
+        "data/vectors/chroma", 
+        "data/vectors/milvus",
+        "data/memory",
+        "data/memory_vectors",
+        "data/document_cache",
+        "data/metadata_cache",
+        "data/logs",
+        "data/tasks",
+        "data/metrics",
+        "data/workspace"
+    ]
+    
+    for directory in data_dirs:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            logger.info(f"Ensured data directory exists: {directory}")
+        except Exception as e:
+            logger.error(f"Failed to create data directory {directory}: {e}")
+
+# Initialize data directories
+ensure_data_directories()
+
 # Initialize coordinator with error handling
 try:
-    from agents.coordinator import TaskCoordinator
+    from src.agents.coordinator import TaskCoordinator
     coordinator = TaskCoordinator()
     available_features['task_coordinator'] = True
     
@@ -115,13 +146,37 @@ def get_llm_providers():
         
     try:
         providers = coordinator.llm_service.list_providers()
-        return jsonify({'providers': providers})
+        # Include fallback configuration
+        fallback_enabled = os.environ.get("ENABLE_LOCAL_LLM_FALLBACK", "false").lower() == "true"
+        return jsonify({
+            'providers': providers,
+            'fallback_enabled': fallback_enabled
+        })
     except Exception as e:
         logger.error(f"Error getting LLM providers: {e}")
         return jsonify({
             'status': 'error',
             'error': str(e),
             'message': 'Failed to get LLM providers'
+        }), 500
+        
+@app.route('/llm/fallback/stats', methods=['GET'])
+def get_llm_fallback_stats():
+    """Get statistics about LLM fallbacks and rejected prompts"""
+    # Check coordinator availability
+    error_response = check_coordinator_available()
+    if error_response:
+        return error_response
+        
+    try:
+        stats = coordinator.llm_service.get_rejected_prompts_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Error getting LLM fallback statistics: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'message': 'Failed to get LLM fallback statistics'
         }), 500
 
 @app.route('/llm/recommendations', methods=['GET'])
