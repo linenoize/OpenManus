@@ -25,7 +25,6 @@ from src.tools.storage_backends import (
     LocalStorageBackend,
     GitStorageBackend,
     GoogleDriveStorageBackend,
-    OneDriveStorageBackend,
     FileManagerError,
     StorageBackendError,
     FileOperationError
@@ -143,16 +142,6 @@ class FileManagerTool:
                         )
                         self.base_paths["google_drive"] = backend_config.get("root_folder", "OpenManus")
                 
-                elif backend_name == "onedrive":
-                    if backend_config["requires_auth"] and not backend_config.get("credentials_path"):
-                        logger.warning("OneDrive backend requires credentials_path to be set")
-                        self.storage_backends["onedrive"] = None
-                    else:
-                        self.storage_backends["onedrive"] = OneDriveStorageBackend(
-                            credentials_path=backend_config.get("credentials_path"),
-                            root_folder=backend_config.get("root_folder", "OpenManus")
-                        )
-                        self.base_paths["onedrive"] = backend_config.get("root_folder", "OpenManus")
                 
                 else:
                     logger.warning(f"Unknown backend type: {backend_name}")
@@ -167,12 +156,11 @@ class FileManagerTool:
         Initialize or update a specific storage backend.
         
         Args:
-            backend_type: The backend to initialize ('local', 'git', 'google_drive', 'onedrive')
+            backend_type: The backend to initialize ('local', 'git', 'google_drive')
             **kwargs: Backend-specific initialization parameters
                 For local: base_path
                 For git: base_path, user_name, user_email
                 For google_drive: credentials_path, root_folder
-                For onedrive: credentials_path, root_folder
             
         Returns:
             True if successful, False otherwise
@@ -182,7 +170,7 @@ class FileManagerTool:
             if backend_type not in self.config["backends"]:
                 self.config["backends"][backend_type] = {
                     "enabled": True,
-                    "requires_auth": backend_type in ["google_drive", "onedrive"]
+                    "requires_auth": backend_type in ["google_drive"]
                 }
             
             # Enable the backend
@@ -227,20 +215,6 @@ class FileManagerTool:
                 self.base_paths["google_drive"] = root_folder
                 return self.storage_backends["google_drive"].authenticated
                 
-            elif backend_type == "onedrive":
-                credentials_path = self.config["backends"]["onedrive"].get("credentials_path")
-                root_folder = self.config["backends"]["onedrive"].get("root_folder", "OpenManus")
-                
-                if not credentials_path:
-                    logger.warning("OneDrive backend requires credentials_path")
-                    return False
-                    
-                self.storage_backends["onedrive"] = OneDriveStorageBackend(
-                    credentials_path=credentials_path,
-                    root_folder=root_folder
-                )
-                self.base_paths["onedrive"] = root_folder
-                return self.storage_backends["onedrive"].authenticated
                 
             else:
                 logger.warning(f"Unknown backend type: {backend_type}")

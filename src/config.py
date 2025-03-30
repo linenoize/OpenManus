@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
 from dotenv import load_dotenv
@@ -22,7 +23,7 @@ class Config:
                 config_data = json.load(f)
             return Config(config_data)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Warning: Failed to load config from {file_path}: {e}")
+            logging.warning(f"Failed to load config from {file_path}: {e}")
             return Config({})
     
     def get(self, key: str, default: Any = None) -> Any:
@@ -80,7 +81,7 @@ class Config:
                 json.dump(self.config_data, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving config to {file_path}: {e}")
+            logging.error(f"Error saving config to {file_path}: {e}")
             return False
     
     def get_file_manager_config(self) -> Dict[str, Any]:
@@ -105,12 +106,6 @@ class Config:
                     "requires_auth": True,
                     "credentials_path": self.get("GDRIVE_CREDENTIALS_PATH", "credentials/gdrive_credentials.json"),
                     "root_folder": self.get("GDRIVE_ROOT_FOLDER", "OpenManus")
-                },
-                "onedrive": {
-                    "enabled": os.path.exists(self.get("ONEDRIVE_CREDENTIALS_PATH", "credentials/onedrive_credentials.json")),
-                    "requires_auth": True,
-                    "credentials_path": self.get("ONEDRIVE_CREDENTIALS_PATH", "credentials/onedrive_credentials.json"),
-                    "root_folder": self.get("ONEDRIVE_ROOT_FOLDER", "OpenManus")
                 }
             },
             "storage_preferences": {
@@ -147,7 +142,7 @@ class Config:
                     if env_key not in os.environ:
                         config["storage_preferences"][file_type] = storage_type
             except Exception as e:
-                print(f"Error loading file manager config from {file_config_path}: {e}")
+                logging.error(f"Error loading file manager config from {file_config_path}: {e}")
         
         return config
 
@@ -158,7 +153,7 @@ def load_config() -> Config:
     if os.path.exists(config_path):
         return Config.load_from_file(config_path)
     else:
-        print(f"Config file {config_path} not found, using default configuration.")
+        logging.warning(f"Config file {config_path} not found, using default configuration.")
         return Config({})
 
 def save_config(config: Config, file_path: Optional[str] = None) -> bool:

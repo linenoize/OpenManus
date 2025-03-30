@@ -1,6 +1,9 @@
 import logging
 from src.tools.llm_service import initialize_llm_service
 
+# Import agent classes are already defined below in this file
+# Circular import issue fixed by having agent classes in the same file
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -19,9 +22,20 @@ class TaskCoordinator:
         self.llm_service = initialize_llm_service()
         
         # Initialize agents with LLM service
-        self.agents['planner'] = PlannerAgent(self.llm_service)
-        self.agents['executor'] = ExecutionAgent(self.llm_service)
-        self.agents['tool'] = ToolAgent(self.llm_service)
+        try:
+            self.agents['planner'] = PlannerAgent(self.llm_service)
+            self.agents['executor'] = ExecutionAgent(self.llm_service)
+            self.agents['tool'] = ToolAgent(self.llm_service)
+            logger.info("All agents initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing agents: {e}", exc_info=True)
+            # Ensure agents dictionary is properly initialized even if some agents fail
+            if 'planner' not in self.agents:
+                self.agents['planner'] = None
+            if 'executor' not in self.agents:
+                self.agents['executor'] = None
+            if 'tool' not in self.agents:
+                self.agents['tool'] = None
         
         # Initialize tools
         self.tools = self._initialize_tools()
@@ -285,7 +299,6 @@ class PlannerAgent:
                 - local: For temporary or short-term files
                 - git: For code and knowledge base files (with versioning)
                 - google_drive: For long-term storage (requires initialization)
-                - onedrive: Alternative cloud storage (requires initialization)
                 
                 Return a JSON object with the following structure:
                 {{

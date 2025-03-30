@@ -79,11 +79,6 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 ## Future Enhancements
 
 - [ ] Data Storage and Integration
-  - [ ] Implement OneDrive storage backend (LOW PRIORITY)
-    - Current implementation is a placeholder
-    - Need to add Microsoft Graph API integration
-    - Implement authentication flow (similar to Google Drive)
-    - Create proper error handling and path management
   - [ ] Support multiple vector database backends beyond FAISS
     - [ ] Add Pinecone integration
     - [ ] Add Weaviate integration
@@ -149,3 +144,24 @@ This file tracks planned improvements and unfinished features in the OpenManus p
   - [ ] Review file permissions in Docker containers
   - [ ] Add input validation for all user-provided inputs
   - [ ] Implement proper credential management
+
+## Critical Issues
+
+- [x] Missing agent implementations
+  - [x] Fixed circular import in coordinator.py
+  - [x] Added error handling for agent initialization failures
+
+- [x] Data directory configuration
+  - [x] Added runtime checks for data directory existence
+  - [x] Implemented automatic creation of necessary data directories
+  - [x] Improved error handling for missing configuration files
+
+- [x] Environment variable handling
+  - [x] Added graceful handling for missing required API keys
+  - [x] Created mock providers as fallbacks when real connections fail
+  - [x] Added fallback provider when no LLM services are available
+
+- [x] Error handling for storage backends
+  - [x] Added proper error handling in OneDriveStorageBackend for methods that raise NotImplementedError
+  - [x] Implemented checks in FileManagerTool to handle storage backend failures
+  - [x] Added authentication checks before using storage backends
