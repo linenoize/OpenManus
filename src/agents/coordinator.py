@@ -94,6 +94,15 @@ class TaskCoordinator:
             logger.info("Install required dependencies with: pip install PyPDF2 python-docx")
             document_processing = None
             
+        # Import APIIntegrationTool
+        try:
+            from src.tools.api_integration_tool import APIIntegrationTool
+            api_integration = APIIntegrationTool()
+            logger.info("Initialized API Integration Tool")
+        except ImportError as e:
+            logger.warning(f"APIIntegrationTool could not be initialized: {e}")
+            api_integration = None
+            
         tools = {
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
@@ -118,6 +127,9 @@ class TaskCoordinator:
             
         if document_processing:
             tools['document_processing'] = document_processing
+            
+        if api_integration:
+            tools['api_integration'] = api_integration
             
         return tools
     
@@ -510,6 +522,14 @@ class ToolAgent:
                 'set_storage_preference': ['file_type', 'storage_type'],
                 'get_file_history': ['path'],
                 'initialize_backend': ['backend_type']
+            },
+            'api_integration': {
+                'download_media': ['url'],
+                'extract_media_info': ['url'],
+                'get_available_apis': [],
+                'check_activation_status': ['request_id'],
+                'confirm_activation': ['request_id'],
+                'search_api': ['provider', 'api_id', 'query']
             }
         }
     
@@ -789,6 +809,65 @@ class ToolAgent:
                     if not result:
                         return f"Error: Failed to initialize backend: {args.get('backend_type')}"
                     return f"Backend initialized successfully: {args.get('backend_type')}"
+                    
+            # API Integration Tool operations
+            elif tool_name == 'api_integration':
+                if operation == 'download_media':
+                    result = tool.download_media(**args)
+                    if not result.get('success', False):
+                        if result.get('requires_activation', False):
+                            return f"Error: API activation required: {result.get('action_required', '')}"
+                        elif result.get('requires_api_key', False):
+                            return f"Error: API key required: {result.get('action_required', '')}"
+                        else:
+                            return f"Error downloading media: {result.get('error', 'Unknown error')}"
+                    return f"Media downloaded successfully: {result.get('url')} -> {result.get('download', {}).get('filepath', 'unknown')}"
+                    
+                elif operation == 'extract_media_info':
+                    result = tool.extract_media_info(**args)
+                    if not result.get('success', False):
+                        return f"Error extracting media info: {result.get('error', 'Unknown error')}"
+                    
+                    platform = result.get('platform', 'unknown')
+                    media_type = result.get('media_type', 'unknown')
+                    author = result.get('author', {}).get('name', 'unknown')
+                    return f"Media info from {platform}: {media_type} by {author} - {result.get('title', '')}"
+                    
+                elif operation == 'get_available_apis':
+                    result = tool.get_available_apis()
+                    if not result.get('success', False):
+                        return f"Error getting available APIs: {result.get('error', 'Unknown error')}"
+                    
+                    providers = result.get('providers', {})
+                    if not providers:
+                        return "No API providers available"
+                        
+                    provider_summary = []
+                    for provider, apis in providers.items():
+                        api_names = [api.get('name', 'Unknown') for api in apis if 'name' in api]
+                        provider_summary.append(f"{provider}: {', '.join(api_names)}")
+                    
+                    return f"Available API providers: {', '.join(provider_summary)}"
+                    
+                elif operation == 'check_activation_status':
+                    result = tool.check_activation_status(**args)
+                    if not result.get('success', False):
+                        return f"Error checking activation status: {result.get('error', 'Unknown error')}"
+                    return f"Activation status: {result.get('status')} - {result.get('message', '')}"
+                    
+                elif operation == 'confirm_activation':
+                    result = tool.confirm_activation(**args)
+                    if not result.get('success', False):
+                        return f"Error confirming activation: {result.get('error', 'Unknown error')}"
+                    return f"Activation confirmed: {result.get('message', '')}"
+                    
+                elif operation == 'search_api':
+                    result = tool.search_api(**args)
+                    if not result.get('success', False):
+                        return f"Error searching API: {result.get('error', 'Unknown error')}"
+                    
+                    results = result.get('results', [])
+                    return f"Search results from {result.get('provider')}/{result.get('api')}: {len(results)} found"
             
             # Should never reach here due to validation
             return f"Error: Unknown operation for {tool_name}: {operation}"
