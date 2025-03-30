@@ -112,6 +112,15 @@ class TaskCoordinator:
             logger.warning(f"MediaAnalysisTool could not be initialized: {e}")
             media_analysis = None
             
+        # Import VerificationFramework
+        try:
+            from src.tools.verification_framework import VerificationFramework
+            verification_framework = VerificationFramework()
+            logger.info("Initialized Verification Framework")
+        except ImportError as e:
+            logger.warning(f"VerificationFramework could not be initialized: {e}")
+            verification_framework = None
+            
         tools = {
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
@@ -142,6 +151,9 @@ class TaskCoordinator:
             
         if media_analysis:
             tools['media_analysis'] = media_analysis
+            
+        if verification_framework:
+            tools['verification'] = verification_framework
             
         return tools
     
@@ -549,6 +561,15 @@ class ToolAgent:
                 'analyze_audio': ['audio_path'],
                 'verify_media': ['media_path'],
                 'extract_from_media': ['media_path', 'extraction_type']
+            },
+            'verification': {
+                'check_fact': ['statement'],
+                'add_fact': ['fact', 'source_url'],
+                'assess_source_credibility': ['source_url'],
+                'verify_claim': ['claim'],
+                'add_claim': ['claim', 'truth_score', 'sources'],
+                'collect_evidence': ['claim', 'sources'],
+                'get_verification_stats': []
             }
         }
     
@@ -969,6 +990,86 @@ class ToolAgent:
                         return f"Extracted metadata from {media_type}"
                     
                     return f"Extracted {extraction_type} from {media_type}"
+            
+            # Verification Framework operations
+            elif tool_name == 'verification':
+                if operation == 'check_fact':
+                    result = tool.check_fact(**args)
+                    if not result.get("success", False):
+                        return f"Error checking fact: {result.get('error', 'Unknown error')}"
+                    
+                    truth_score = result.get("truth_score", 0)
+                    confidence = result.get("confidence", 0)
+                    verified = result.get("verified", False)
+                    
+                    status = "verified" if verified else "unverified"
+                    return f"Fact check: {status} (truth score: {truth_score:.2f}, confidence: {confidence:.2f})"
+                
+                elif operation == 'add_fact':
+                    result = tool.add_fact(**args)
+                    if not result.get("success", False):
+                        return f"Error adding fact: {result.get('error', 'Unknown error')}"
+                    
+                    status = result.get("status", "unknown")
+                    fact_id = result.get("fact_id", "")
+                    
+                    return f"Fact {status} with ID: {fact_id}"
+                
+                elif operation == 'assess_source_credibility':
+                    result = tool.assess_source_credibility(**args)
+                    if not result.get("success", False):
+                        return f"Error assessing source credibility: {result.get('error', 'Unknown error')}"
+                    
+                    source_url = result.get("source_url", "")
+                    score = result.get("credibility_score", 0)
+                    classification = result.get("classification", "unknown")
+                    
+                    return f"Source '{source_url}' assessed: {classification} (credibility score: {score:.2f})"
+                
+                elif operation == 'verify_claim':
+                    result = tool.verify_claim(**args)
+                    if not result.get("success", False):
+                        return f"Error verifying claim: {result.get('error', 'Unknown error')}"
+                    
+                    verified = result.get("verified", False)
+                    truth_score = result.get("truth_score", 0)
+                    confidence = result.get("confidence", 0)
+                    category = result.get("verification_category", "unknown")
+                    
+                    return f"Claim verification: {category} (truth score: {truth_score:.2f}, confidence: {confidence:.2f})"
+                
+                elif operation == 'add_claim':
+                    result = tool.add_claim(**args)
+                    if not result.get("success", False):
+                        return f"Error adding claim: {result.get('error', 'Unknown error')}"
+                    
+                    status = result.get("status", "unknown")
+                    claim_id = result.get("claim_id", "")
+                    
+                    return f"Claim {status} with ID: {claim_id}"
+                
+                elif operation == 'collect_evidence':
+                    result = tool.collect_evidence(**args)
+                    if not result.get("success", False):
+                        return f"Error collecting evidence: {result.get('error', 'Unknown error')}"
+                    
+                    collection_id = result.get("collection_id", "")
+                    evidence_count = result.get("evidence_count", 0)
+                    credibility = result.get("summary", {}).get("overall_credibility", 0)
+                    
+                    return f"Evidence collected (ID: {collection_id}): {evidence_count} items, overall credibility: {credibility:.2f}"
+                
+                elif operation == 'get_verification_stats':
+                    result = tool.get_verification_stats()
+                    if not result.get("success", False):
+                        return f"Error getting verification stats: {result.get('error', 'Unknown error')}"
+                    
+                    stats = result.get("stats", {})
+                    db_stats = result.get("database_stats", {})
+                    
+                    return (f"Verification stats: {stats.get('verifications_performed', 0)} verifications performed, "
+                            f"{db_stats.get('facts', 0)} facts, {db_stats.get('claims', 0)} claims, "
+                            f"{db_stats.get('sources', 0)} sources in database")
             
             # Should never reach here due to validation
             return f"Error: Unknown operation for {tool_name}: {operation}"
