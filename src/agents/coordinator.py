@@ -103,6 +103,15 @@ class TaskCoordinator:
             logger.warning(f"APIIntegrationTool could not be initialized: {e}")
             api_integration = None
             
+        # Import MediaAnalysisTool
+        try:
+            from src.tools.media_analysis_tool import MediaAnalysisTool
+            media_analysis = MediaAnalysisTool()
+            logger.info("Initialized Media Analysis Tool")
+        except ImportError as e:
+            logger.warning(f"MediaAnalysisTool could not be initialized: {e}")
+            media_analysis = None
+            
         tools = {
             'web_browser': WebBrowserTool(),
             'code_executor': CodeExecutorTool(),
@@ -130,6 +139,9 @@ class TaskCoordinator:
             
         if api_integration:
             tools['api_integration'] = api_integration
+            
+        if media_analysis:
+            tools['media_analysis'] = media_analysis
             
         return tools
     
@@ -530,6 +542,13 @@ class ToolAgent:
                 'check_activation_status': ['request_id'],
                 'confirm_activation': ['request_id'],
                 'search_api': ['provider', 'api_id', 'query']
+            },
+            'media_analysis': {
+                'analyze_image': ['image_path'],
+                'analyze_video': ['video_path'],
+                'analyze_audio': ['audio_path'],
+                'verify_media': ['media_path'],
+                'extract_from_media': ['media_path', 'extraction_type']
             }
         }
     
@@ -868,6 +887,88 @@ class ToolAgent:
                     
                     results = result.get('results', [])
                     return f"Search results from {result.get('provider')}/{result.get('api')}: {len(results)} found"
+            
+            # Media Analysis Tool operations
+            elif tool_name == 'media_analysis':
+                if operation == 'analyze_image':
+                    result = tool.analyze_image(**args)
+                    if not result.get("success", False):
+                        return f"Error analyzing image: {result.get('error', 'Unknown error')}"
+                    
+                    labels = result.get("content", {}).get("labels", [])
+                    labels_str = ", ".join([label.get("description", "") for label in labels[:3]])
+                    objects = result.get("content", {}).get("objects", [])
+                    faces = result.get("content", {}).get("faces", [])
+                    
+                    return f"Image analysis complete: Found {len(labels)} labels ({labels_str}...), {len(objects)} objects, {len(faces)} faces"
+                
+                elif operation == 'analyze_video':
+                    result = tool.analyze_video(**args)
+                    if not result.get("success", False):
+                        return f"Error analyzing video: {result.get('error', 'Unknown error')}"
+                    
+                    duration = result.get("metadata", {}).get("duration", 0)
+                    scenes = result.get("content", {}).get("scenes", [])
+                    objects = result.get("content", {}).get("objects", [])
+                    has_transcript = bool(result.get("content", {}).get("transcript", ""))
+                    
+                    return f"Video analysis complete: {duration} seconds, {len(scenes)} scenes, {len(objects)} objects, {'with' if has_transcript else 'without'} transcript"
+                
+                elif operation == 'analyze_audio':
+                    result = tool.analyze_audio(**args)
+                    if not result.get("success", False):
+                        return f"Error analyzing audio: {result.get('error', 'Unknown error')}"
+                    
+                    duration = result.get("metadata", {}).get("duration", 0)
+                    speakers = result.get("content", {}).get("speakers", [])
+                    language = result.get("content", {}).get("language", "unknown")
+                    has_transcript = bool(result.get("content", {}).get("transcript", ""))
+                    
+                    return f"Audio analysis complete: {duration} seconds, {len(speakers)} speakers, language: {language}, {'with' if has_transcript else 'without'} transcript"
+                
+                elif operation == 'verify_media':
+                    result = tool.verify_media(**args)
+                    if not result.get("success", False):
+                        return f"Error verifying media: {result.get('error', 'Unknown error')}"
+                    
+                    score = result.get("verification_score", 0)
+                    confidence = result.get("confidence", 0)
+                    summary = result.get("summary", "")
+                    
+                    return f"Media verification complete: Score {score:.2f} (confidence: {confidence:.2f})\nSummary: {summary}"
+                
+                elif operation == 'extract_from_media':
+                    result = tool.extract_from_media(**args)
+                    if not result.get("success", False):
+                        return f"Error extracting from media: {result.get('error', 'Unknown error')}"
+                    
+                    extraction_type = result.get("extraction_type", "")
+                    media_type = result.get("media_type", "")
+                    
+                    if extraction_type == "text":
+                        text = result.get("extracted_data", "")
+                        preview = text[:100] + "..." if len(text) > 100 else text
+                        return f"Extracted text from {media_type}: {preview}"
+                    
+                    elif extraction_type == "objects":
+                        objects = result.get("extracted_data", [])
+                        return f"Extracted {len(objects)} objects from {media_type}"
+                    
+                    elif extraction_type == "faces":
+                        faces = result.get("extracted_data", [])
+                        return f"Extracted {len(faces)} faces from {media_type}"
+                    
+                    elif extraction_type == "audio":
+                        return f"Extracted audio from {media_type}: {result.get('extracted_data', {}).get('audio_file', '')}"
+                    
+                    elif extraction_type == "keyframes":
+                        keyframes = result.get("extracted_data", [])
+                        return f"Extracted {len(keyframes)} keyframes from {media_type}"
+                    
+                    elif extraction_type == "metadata":
+                        return f"Extracted metadata from {media_type}"
+                    
+                    return f"Extracted {extraction_type} from {media_type}"
             
             # Should never reach here due to validation
             return f"Error: Unknown operation for {tool_name}: {operation}"
