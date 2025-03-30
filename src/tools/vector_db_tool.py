@@ -515,6 +515,259 @@ class MilvusBackend(VectorDBBackend):
             return False
 
 
+class OpenAIBackend(VectorDBBackend):
+    """OpenAI Vector Store backend."""
+    
+    def __init__(self, dimension: int, base_path: Path, **kwargs):
+        """Initialize OpenAI Vector Store backend."""
+        self.dimension = dimension
+        self.base_path = base_path
+        self.api_key = kwargs.get("api_key", os.environ.get("OPENAI_API_KEY", ""))
+        self.collections = {}
+        self.metadata_dir = base_path / "openai"
+        self.metadata_dir.mkdir(parents=True, exist_ok=True)
+        
+        if not self.api_key:
+            logger.error("OpenAI API key not found. Set OPENAI_API_KEY environment variable.")
+            raise ValueError("OpenAI API key not found.")
+        
+        # Dynamically import OpenAI client
+        try:
+            import openai
+            self.openai = openai
+            self.openai.api_key = self.api_key
+            
+            # Initialize client with API key
+            self.client = openai.OpenAI(api_key=self.api_key)
+            
+            # Load existing collections from metadata files
+            self._load_collections()
+            
+        except ImportError:
+            logger.error("OpenAI Python client not found. Please install it with 'pip install openai'")
+            raise
+    
+    def _load_collections(self):
+        """Load collections metadata from disk."""
+        for metadata_file in self.metadata_dir.glob("*.json"):
+            collection_name = metadata_file.stem
+            try:
+                with open(metadata_file, 'r') as f:
+                    collection_data = json.load(f)
+                    self.collections[collection_name] = collection_data
+            except Exception as e:
+                logger.error(f"Error loading collection {collection_name}: {e}")
+    
+    def _save_collection_metadata(self, collection_name: str):
+        """Save collection metadata to disk."""
+        metadata_file = self.metadata_dir / f"{collection_name}.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(self.collections[collection_name], f, indent=2)
+    
+    def create_collection(self, collection_name: str) -> bool:
+        """Create a new OpenAI vector collection."""
+        if collection_name in self.collections:
+            return False
+        
+        try:
+            # Create a new vector store in OpenAI
+            response = self.client.beta.vector_stores.create(
+                name=collection_name,
+                description=f"Vector store for {collection_name}"
+            )
+            
+            # Store collection metadata
+            self.collections[collection_name] = {
+                "id": response.id,
+                "name": collection_name,
+                "description": f"Vector store for {collection_name}",
+                "created_at": datetime.now().isoformat(),
+                "files": []
+            }
+            
+            # Save to disk
+            self._save_collection_metadata(collection_name)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error creating OpenAI vector store: {e}")
+            return False
+    
+    def delete_collection(self, collection_name: str) -> bool:
+        """Delete an OpenAI vector collection."""
+        if collection_name not in self.collections:
+            return False
+        
+        try:
+            # Delete the vector store in OpenAI
+            vector_store_id = self.collections[collection_name]["id"]
+            self.client.beta.vector_stores.delete(vector_store_id=vector_store_id)
+            
+            # Remove from local collections
+            del self.collections[collection_name]
+            
+            # Remove metadata file
+            metadata_file = self.metadata_dir / f"{collection_name}.json"
+            if metadata_file.exists():
+                os.remove(metadata_file)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting OpenAI vector store: {e}")
+            return False
+    
+    def list_collections(self) -> List[str]:
+        """List all OpenAI vector collections."""
+        return list(self.collections.keys())
+    
+    def add_embeddings(self, collection_name: str, embeddings: np.ndarray) -> bool:
+        """Add embeddings to an OpenAI vector collection."""
+        if collection_name not in self.collections:
+            return False
+        
+        try:
+            vector_store_id = self.collections[collection_name]["id"]
+            
+            # Convert embeddings to list format required by OpenAI
+            embeddings_list = embeddings.tolist()
+            file_ids = []
+            
+            # Generate a unique batch ID
+            batch_id = datetime.now().strftime("%Y%m%d%H%M%S")
+            
+            # Add each embedding as a file
+            for i, embedding in enumerate(embeddings_list):
+                file_id = f"embedding_{batch_id}_{i}"
+                
+                # Create file with embedding in OpenAI vector store
+                self.client.beta.vector_stores.files.create(
+                    vector_store_id=vector_store_id,
+                    file_id=file_id,
+                    embedding=embedding
+                )
+                
+                file_ids.append(file_id)
+            
+            # Update collection metadata
+            self.collections[collection_name]["files"].extend(file_ids)
+            self._save_collection_metadata(collection_name)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error adding embeddings to OpenAI vector store: {e}")
+            return False
+    
+    def search_by_embedding(self, collection_name: str, embedding: np.ndarray, k: int = 5) -> Tuple[List[int], List[float]]:
+        """Search for similar embeddings in an OpenAI vector collection."""
+        if collection_name not in self.collections:
+            return [], []
+        
+        try:
+            vector_store_id = self.collections[collection_name]["id"]
+            
+            # Convert embedding to list
+            query_embedding = embedding.tolist()[0]  # Extract from the 1-row array
+            
+            # Search for similar vectors
+            response = self.client.beta.vector_stores.query(
+                vector_store_id=vector_store_id,
+                query_vector=query_embedding,
+                limit=k
+            )
+            
+            # Extract file IDs and scores
+            file_ids = []
+            scores = []
+            
+            for match in response.matches:
+                # Get index from file ID (assuming format: embedding_YYYYMMDDHHMMSS_index)
+                parts = match.file_id.split('_')
+                if len(parts) >= 3:
+                    try:
+                        index = int(parts[-1])
+                        file_ids.append(index)
+                        scores.append(match.score)
+                    except ValueError:
+                        continue
+            
+            return file_ids, scores
+        except Exception as e:
+            logger.error(f"Error searching OpenAI vector store: {e}")
+            return [], []
+    
+    def clear_collection(self, collection_name: str) -> bool:
+        """Clear all embeddings from an OpenAI vector collection."""
+        if collection_name not in self.collections:
+            return False
+        
+        try:
+            vector_store_id = self.collections[collection_name]["id"]
+            file_ids = self.collections[collection_name]["files"]
+            
+            # Delete all files in collection
+            for file_id in file_ids:
+                try:
+                    self.client.beta.vector_stores.files.delete(
+                        vector_store_id=vector_store_id,
+                        file_id=file_id
+                    )
+                except Exception as e:
+                    logger.warning(f"Error deleting file {file_id}: {e}")
+            
+            # Update collection metadata
+            self.collections[collection_name]["files"] = []
+            self._save_collection_metadata(collection_name)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing OpenAI vector store: {e}")
+            return False
+    
+    def get_collection_size(self, collection_name: str) -> int:
+        """Get the number of embeddings in an OpenAI vector collection."""
+        if collection_name not in self.collections:
+            return 0
+        
+        return len(self.collections[collection_name]["files"])
+    
+    def save_collection(self, collection_name: str, path: Path) -> bool:
+        """Save a collection to disk."""
+        # OpenAI vector stores are cloud-based, so we just save metadata
+        if collection_name not in self.collections:
+            return False
+        
+        try:
+            with open(path, 'w') as f:
+                json.dump(self.collections[collection_name], f, indent=2)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving OpenAI vector store metadata: {e}")
+            return False
+    
+    def load_collection(self, collection_name: str, path: Path) -> bool:
+        """Load a collection from disk."""
+        if not path.exists():
+            return False
+        
+        try:
+            with open(path, 'r') as f:
+                collection_data = json.load(f)
+            
+            # Check if collection exists in OpenAI
+            vector_store_id = collection_data.get("id")
+            try:
+                # Attempt to get the vector store to verify it exists
+                self.client.beta.vector_stores.retrieve(vector_store_id=vector_store_id)
+                self.collections[collection_name] = collection_data
+                return True
+            except Exception:
+                logger.warning(f"OpenAI vector store {vector_store_id} not found. Creating a new one.")
+                return self.create_collection(collection_name)
+        except Exception as e:
+            logger.error(f"Error loading OpenAI vector store metadata: {e}")
+            return False
+
+
 class VectorDBTool:
     """
     Tool for vector database storage and retrieval.
@@ -525,7 +778,8 @@ class VectorDBTool:
     BACKENDS = {
         "faiss": FaissBackend,
         "chroma": ChromaBackend,
-        "milvus": MilvusBackend
+        "milvus": MilvusBackend,
+        "openai": OpenAIBackend
     }
     
     def __init__(self, 

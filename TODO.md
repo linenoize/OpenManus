@@ -79,11 +79,11 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 ## Future Enhancements
 
 - [ ] Data Storage and Integration
-  - [ ] Support multiple vector database backends beyond FAISS
-    - [ ] Add Pinecone integration
-    - [ ] Add Weaviate integration
-    - [ ] Add Milvus integration
-    - [ ] Create unified vector database interface
+  - [x] Support multiple vector database backends beyond FAISS
+    - [x] Add OpenAI Vector Store integration
+    - [x] Add Chroma integration
+    - [x] Add Milvus integration
+    - [x] Create unified vector database interface
 
 - [ ] Additional Tools
   - [x] Structured Data Tool
