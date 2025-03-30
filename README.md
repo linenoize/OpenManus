@@ -149,8 +149,16 @@ OPENMANUS_STORAGE_DOCUMENT=local
    
    ```bash
    # In your .env file
-   VECTOR_DB_BACKEND=openai  # Options: faiss, chroma, milvus, openai
+   VECTOR_DB_BACKEND=faiss  # Default local backend
+   # OR
+   VECTOR_DB_BACKEND=openai  # Cloud-based OpenAI backend
    ```
+   
+   The system supports these backends:
+   - **faiss**: Fast local vector search (default, recommended for most use cases)
+   - **openai**: OpenAI's managed vector database (requires API key)
+   - **chroma**: Local persistent vector database (optional)
+   - **milvus**: Scalable vector database server (optional)
    
    If you choose the OpenAI backend, make sure your OpenAI API key is set:
    ```bash
