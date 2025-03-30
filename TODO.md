@@ -85,6 +85,19 @@ This file tracks planned improvements and unfinished features in the OpenManus p
     - [x] Add Milvus integration
     - [x] Create unified vector database interface
 
+- [ ] API Integration Framework
+  - [ ] Implement dynamic third-party API integration system
+    - [ ] Create config-based API key management
+    - [ ] Add RapidAPI integration 
+    - [ ] Add Google Cloud API integration
+    - [ ] Implement subscription status checking
+    - [ ] Add user notification for API activation requirements
+    - [ ] Create workflow pausing/resumption system
+  - [ ] Implement media download capabilities
+    - [ ] Support downloading media from various platforms
+    - [ ] Add format conversion utilities
+    - [ ] Implement caching system for downloaded content
+
 - [ ] Additional Tools
   - [x] Structured Data Tool
     - [x] CSV parser and manipulation
@@ -100,19 +113,25 @@ This file tracks planned improvements and unfinished features in the OpenManus p
     - [x] Track task dependencies and status
     - [x] Implement priority-based execution
   - [ ] Social Media API Tool
-    - [ ] Reddit integration for data collection
-    - [ ] Telegram, Discord, and Slack for interactions
+    - [ ] Social media post/content data extraction
     - [ ] Implement rate limiting and error handling
   - [x] Document Processing Tool
     - [x] PDF parsing and analysis
     - [x] Word document processing
     - [x] Extract structured data from documents
-  - [ ] Image and Video Analysis Tool
+  - [ ] Media Analysis Tool
     - [ ] Extract text from images (OCR)
     - [ ] Generate image descriptions
     - [ ] Extract and transcribe audio from videos
     - [ ] Scene detection and content analysis
-  - [ ] Text-to-Speech/Speech-to-Text Tool (LOW PRIORITY)
+    - [ ] Image similarity and classification
+  - [ ] Verification Framework
+    - [ ] Fact verification database
+    - [ ] Source credibility assessment
+    - [ ] Evidence collection and comparison
+    - [ ] Claim validation scoring system
+    - [ ] Confidence level metrics
+  - [ ] Text-to-Speech/Speech-to-Text Tool
     - [ ] Convert text responses to audio
     - [ ] Process speech input into text commands
 
@@ -131,7 +150,7 @@ This file tracks planned improvements and unfinished features in the OpenManus p
 
 - [ ] Implementation Issues
   - [x] Replace placeholder implementations (empty pass statements)
-  - [ ] Complete OneDrive storage backend implementation
+  - [x] Remove OneDrive storage backend (implementation discontinued)
   - [ ] Add proper test coverage for all components
   - [x] Refactor file_manager.py into modular components
 
