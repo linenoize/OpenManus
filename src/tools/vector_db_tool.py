@@ -786,7 +786,7 @@ class VectorDBTool:
                  base_path: str = "data/vectors",
                  model_name: str = "all-MiniLM-L6-v2",
                  dimension: int = 384,
-                 backend: str = "faiss"):
+                 backend: str = None):
         """
         Initialize vector database tool.
         
@@ -794,10 +794,21 @@ class VectorDBTool:
             base_path: Path to store vector indices and metadata
             model_name: SentenceTransformer model to use for embeddings
             dimension: Embedding dimension (depends on the model)
-            backend: Vector database backend to use ('faiss', 'chroma')
+            backend: Vector database backend to use ('faiss', 'chroma', 'milvus', 'openai')
+                     If None, uses VECTOR_DB_BACKEND environment variable or 'faiss' as default
         """
         self.base_path = Path(base_path)
         self.model_name = model_name
+        
+        # Determine backend from parameters, environment variables, or default
+        if backend is None:
+            # Check environment variable
+            backend = os.environ.get("VECTOR_DB_BACKEND", "faiss")
+            
+        # Validate the backend
+        if backend not in self.BACKENDS:
+            logger.warning(f"Unsupported vector database backend: {backend}. Falling back to 'faiss'.")
+            backend = "faiss"
         self.dimension = dimension
         self.backend_name = backend
         self.metadata = {}

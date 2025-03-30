@@ -115,7 +115,7 @@ LOCAL_LLM_PATH=models/mistral-7b
 API_PORT=5010
 TOOLS_PORT=5011
 FRONTEND_PORT=3010
-VECTOR_DB_BACKEND=faiss
+VECTOR_DB_BACKEND=faiss  # Options: faiss, chroma, milvus, openai
 OPENMANUS_CONFIG_PATH=config.json
 FILE_MANAGER_CONFIG_PATH=file_manager_config.json
 OPENMANUS_STORAGE_TEMP=local
@@ -131,17 +131,33 @@ OPENMANUS_STORAGE_DOCUMENT=local
    
    - **FAISS**: High-performance similarity search library (installed via `faiss-cpu`)
    - **Sentence Transformers**: Text embedding models like `all-MiniLM-L6-v2` (downloaded on first use)
+   - **OpenAI Vector Store**: Cloud-based vector database using OpenAI's infrastructure (requires API key)
    - **ChromaDB** and **Milvus**: Optional alternative vector database backends
    
    For local development, install these dependencies manually:
    
    ```bash
    pip install faiss-cpu sentence-transformers
-   # Optional backends
+   # OpenAI backend (recommended)
+   pip install openai>=1.0.0
+   # Other optional backends
    pip install chromadb pymilvus
    ```
    
-   The first time you use the vector database, the embedding model will be downloaded automatically from Hugging Face (approximately 90MB).
+   **Vector Database Backend Selection:**
+   You can select your preferred vector database backend by setting the `VECTOR_DB_BACKEND` environment variable:
+   
+   ```bash
+   # In your .env file
+   VECTOR_DB_BACKEND=openai  # Options: faiss, chroma, milvus, openai
+   ```
+   
+   If you choose the OpenAI backend, make sure your OpenAI API key is set:
+   ```bash
+   OPENAI_API_KEY=your_key_here
+   ```
+
+   The first time you use the vector database with a local backend (FAISS, ChromaDB), the embedding model will be downloaded automatically from Hugging Face (approximately 90MB).
 
 For full configuration documentation, see `docs/configuration.md`.
 
