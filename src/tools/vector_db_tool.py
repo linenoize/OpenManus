@@ -783,20 +783,26 @@ class VectorDBTool:
     }
     
     def __init__(self, 
-                 base_path: str = "data/vectors",
+                 base_path: str = None,
                  model_name: str = "all-MiniLM-L6-v2",
                  dimension: int = 384,
-                 backend: str = None):
+                 backend: str = None,
+                 **kwargs):
         """
         Initialize vector database tool.
         
         Args:
-            base_path: Path to store vector indices and metadata
+            base_path: Path to store vector indices and metadata. If None, uses OPENMANUS_VECTOR_DB_PATH env var or default
             model_name: SentenceTransformer model to use for embeddings
             dimension: Embedding dimension (depends on the model)
             backend: Vector database backend to use ('faiss', 'chroma', 'milvus', 'openai')
                      If None, uses VECTOR_DB_BACKEND environment variable or 'faiss' as default
+            **kwargs: Additional backend-specific parameters
         """
+        # Check if base_path is specified in environment variable
+        if base_path is None:
+            base_path = os.environ.get("OPENMANUS_VECTOR_DB_PATH", "data/vectors")
+        
         self.base_path = Path(base_path)
         self.model_name = model_name
         
@@ -809,6 +815,15 @@ class VectorDBTool:
         if backend not in self.BACKENDS:
             logger.warning(f"Unsupported vector database backend: {backend}. Falling back to 'faiss'.")
             backend = "faiss"
+            
+        # Prepare backend-specific configurations from environment variables
+        backend_kwargs = kwargs.copy()
+        
+        # For Milvus, check for MILVUS_URI environment variable
+        if backend == "milvus" and "uri" not in backend_kwargs:
+            milvus_uri = os.environ.get("MILVUS_URI")
+            if milvus_uri:
+                backend_kwargs["uri"] = milvus_uri
         self.dimension = dimension
         self.backend_name = backend
         self.metadata = {}
@@ -829,7 +844,7 @@ class VectorDBTool:
             raise ValueError(f"Unknown backend: {backend}. Available backends: {list(self.BACKENDS.keys())}")
         
         backend_class = self.BACKENDS[backend]
-        self.backend = backend_class(dimension=dimension, base_path=self.base_path)
+        self.backend = backend_class(dimension=dimension, base_path=self.base_path, **backend_kwargs)
         
         # Load metadata
         self._load_metadata()

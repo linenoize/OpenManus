@@ -150,20 +150,49 @@ OPENMANUS_STORAGE_DOCUMENT=local
    ```bash
    # In your .env file
    VECTOR_DB_BACKEND=faiss  # Default local backend
-   # OR
-   VECTOR_DB_BACKEND=openai  # Cloud-based OpenAI backend
    ```
    
    The system supports these backends:
-   - **faiss**: Fast local vector search (default, recommended for most use cases)
-   - **openai**: OpenAI's managed vector database (requires API key)
-   - **chroma**: Local persistent vector database (optional)
-   - **milvus**: Scalable vector database server (optional)
    
-   If you choose the OpenAI backend, make sure your OpenAI API key is set:
+   #### FAISS (Default)
    ```bash
-   OPENAI_API_KEY=your_key_here
+   VECTOR_DB_BACKEND=faiss
    ```
+   - Fast, in-memory vector database for local deployment
+   - No additional configuration required
+   - Recommended for most use cases
+   
+   #### OpenAI Vector Store
+   ```bash
+   VECTOR_DB_BACKEND=openai
+   OPENAI_API_KEY=your_key_here  # Required for OpenAI backend
+   ```
+   - Cloud-based vector database hosted by OpenAI
+   - Requires an OpenAI API key
+   - Good for production use cases with no local infrastructure requirements
+   
+   #### ChromaDB
+   ```bash
+   VECTOR_DB_BACKEND=chroma
+   # Optional: Configure persistent storage location
+   OPENMANUS_VECTOR_DB_PATH=/path/to/your/vector/storage
+   ```
+   - Local persistent vector database
+   - Install with: `pip install chromadb`
+   - Data is stored at {OPENMANUS_VECTOR_DB_PATH}/chromadb
+   
+   #### Milvus
+   ```bash
+   VECTOR_DB_BACKEND=milvus
+   MILVUS_URI=http://your-milvus-server:19530  # Default: http://localhost:19530
+   ```
+   - Scalable, distributed vector database server
+   - Install client with: `pip install pymilvus`
+   - Requires a running Milvus server (see [Milvus docs](https://milvus.io/docs))
+   - You can run Milvus with Docker:
+     ```bash
+     docker run -d --name milvus-standalone -p 19530:19530 -p 9091:9091 milvusdb/milvus:latest
+     ```
 
    The first time you use the vector database with a local backend (FAISS, ChromaDB), the embedding model will be downloaded automatically from Hugging Face (approximately 90MB).
 
